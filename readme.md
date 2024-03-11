@@ -3,6 +3,12 @@
 
 ## Как проверить
 
+### POSTMAN
+
+Postman коллекция в файле `OTUS_highload.postman_collection.json` в корне проекта.
+
+### CURL
+
 Создать пользователя:
 
 ```
@@ -21,6 +27,7 @@ curl -H "Conten-Type: application/json\nAccept: application/json" -X GET http://
 curl -H "Conten-Type: application/json\nAccept: application/json" -X POST http://localhost:8000/login -d '{"id": "bd4f9c29-9f1a-4414-8992-0e022fa7d22b", "password": "password"}'
 ```
 
+## Projct structure
 
 ### React application with a Rust backend and a Postgresql database
 
