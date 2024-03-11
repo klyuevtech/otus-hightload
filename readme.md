@@ -1,3 +1,27 @@
+# Домашнее задание
+Заготовка для социальной сети
+
+## Как проверить
+
+Создать пользователя:
+
+```
+curl -H "Conten-Type: application/json\nAccept: application/json" -X POST http://localhost:8000/user/register -d '{"first_name":"first_name","second_name":"second_name","birthdate":"2017-02-01","biography":"biography","city":"city","password":"password1234567"}'
+```
+
+Запросить профиль пользователя:
+
+```
+curl -H "Conten-Type: application/json\nAccept: application/json" -X GET http://localhost:8000/user
+```
+
+Получить ID сессии по логину/паролю:
+
+```
+curl -H "Conten-Type: application/json\nAccept: application/json" -X POST http://localhost:8000/login -d '{"id": "bd4f9c29-9f1a-4414-8992-0e022fa7d22b", "password": "password"}'
+```
+
+
 ### React application with a Rust backend and a Postgresql database
 
 Project structure:

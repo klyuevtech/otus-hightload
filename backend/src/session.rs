@@ -22,7 +22,7 @@ impl From<Row> for Session {
 }
 
 impl Session {
-    pub fn build(user_id: &String, data: String) -> Session {
+    pub fn new(user_id: &String, data: String) -> Session {
         Session {
             id: Uuid::new_v4(),
             user_id: Uuid::from_str(&user_id).unwrap(),
@@ -38,7 +38,7 @@ impl Session {
         Ok(Session::from(row))
     }
 
-    pub async fn create<C: GenericClient>(client: &C, session: Session) -> Result<Uuid, Error> {
+    pub async fn create<C: GenericClient>(client: &C, session: &Session) -> Result<Uuid, Error> {
         let id = if "" == session.id.to_string() { Uuid::new_v4() } else { session.id };
 
         let stmt = client.prepare(

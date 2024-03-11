@@ -1,7 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 use std::error::Error;
-use tokio_postgres::{Error as PostgresError, GenericClient, Row};
+use chrono::NaiveDate;
+use tokio_postgres::{types::Date, Error as PostgresError, GenericClient, Row};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
@@ -19,18 +20,19 @@ pub struct User {
     id: Uuid,
     first_name: String,
     second_name: String,
-    birthdate: String,
+    birthdate: chrono::NaiveDate,
     biography: String,
     city: String,
 }
 
 impl From<Row> for User {
     fn from(row: Row) -> Self {
+        let birthdate: NaiveDate = row.get(3);
         Self {
             id: row.get(0),
             first_name: row.get(1),
             second_name: row.get(2),
-            birthdate: row.get(3),
+            birthdate,
             biography: row.get(4),
             city: row.get(5),
         }
@@ -61,7 +63,7 @@ impl Error for UserDataError {
 }
 
 impl User {
-    pub fn build(
+    pub fn new(
         first_name: String,
         second_name: String,
         birthdate: String,
@@ -72,7 +74,13 @@ impl User {
             id: Uuid::new_v4(),
             first_name: if first_name.graphemes(true).count() <= 32 { first_name } else { return Err(UserDataError::new("first_name is too long")) },
             second_name: if second_name.graphemes(true).count() <= 32 { second_name } else { return Err(UserDataError::new("second_name is too long")) },
-            birthdate,
+            birthdate: match chrono::NaiveDate::parse_from_str(&birthdate, "%Y-%m-%d") {
+                Ok(birthdate) => birthdate,
+                Err(e) => {
+                    log::debug!("birthdate format is incorrect: {:?}", e);
+                    return Err(UserDataError::new("birthdate format is incorrect, should be %Y-%m-%d"))
+                }
+            },
             biography: if biography.graphemes(true).count() <= 2048 { biography } else { return Err(UserDataError::new("biography is too long")) },
             city: if city.graphemes(true).count() <= 32 { city } else { return Err(UserDataError::new("city is too long")) },
         })
@@ -84,13 +92,13 @@ impl User {
         Ok(rows.into_iter().map(User::from).collect())
     }
 
-    pub async fn get_by_id<C: GenericClient,>(client: &C, id: &String) -> Result<User, PostgresError> {
+    pub async fn get_by_id<C: GenericClient>(client: &C, id: &String) -> Result<User, PostgresError> {
         let stmt = client.prepare("SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE id = $1").await?;
         let row = client.query_one(&stmt, &[&Uuid::from_str(&id).unwrap()]).await?;
         Ok(User::from(row))
     }
 
-    pub async fn create<C: GenericClient>(client: &C, user: User, password: &String) -> Result<Uuid, PostgresError> {
+    pub async fn create<C: GenericClient>(client: &C, user: &User, password: &String) -> Result<Uuid, PostgresError> {
         let id = if "" == user.id.to_string() { Uuid::new_v4() } else { user.id };
         let (password_hash, salt) = User::encrypt_password(&password);
 
@@ -100,7 +108,7 @@ impl User {
 
         client.execute(
             &stmt,
-            &[&id, &user.first_name, &user.second_name, &user.biography, &user.biography, &user.city, &password_hash, &salt]
+            &[&id, &user.first_name, &user.second_name, &user.birthdate, &user.biography, &user.city, &password_hash, &salt]
         ).await?;
 
         Ok(id)

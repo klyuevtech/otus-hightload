@@ -69,16 +69,22 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
         password: String,
     }
 
-    let user_data = serde_json::from_slice::<UserRegisterPayload>(&body)?;
+    let user_data = match serde_json::from_slice::<UserRegisterPayload>(&body) {
+        Ok(user_data) => user_data,
+        Err(err) => {
+            log::debug!("unable to parse json data: {:?}", err);
+            return Ok(HttpResponse::BadRequest().json("unable to parse json data"));
+        }
+    };
     
     log::debug!("register_user(): parsed user object: {:?}", user_data);
 
     match user::User::is_password_correct(&user_data.password) {
+        Ok(result) => result,
         Err(err) => {
             log::debug!("unable to register user: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("password field format is incorrect"));
+            return Ok(HttpResponse::BadRequest().json("password format is incorrect: ".to_owned() + &err.to_string()));
         }
-        _ => true
     };
 
     let client = match pool.get().await {
@@ -89,18 +95,32 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
         }
     };
 
+    let user = match user::User::new(
+        user_data.first_name,
+        user_data.second_name,
+        user_data.birthdate,
+        user_data.biography,
+        user_data.city
+    ) {
+        Ok(user) => user,
+        Err(e) => {
+            log::debug!("user data is incorrect: {:?}", e);
+            return Ok(HttpResponse::InternalServerError().json("user data is incorrect: ".to_owned() + &e.to_string()));
+        }
+    };
+
     match user::User::create(
         &**client,
-        user::User::build(
-            user_data.first_name,
-            user_data.second_name,
-            user_data.birthdate,
-            user_data.biography,
-            user_data.city
-        ).unwrap(),
+        &user,
         &user_data.password
     ).await {
-        Ok(result) => Ok(HttpResponse::Ok().json(result)),
+        Ok(token) => {
+            #[derive(Debug, Serialize)]
+            struct UserRegisterResponse {
+                user_id: String,
+            }
+            Ok(HttpResponse::Ok().json(UserRegisterResponse{user_id: token.to_string()}))
+        },
         Err(err) => {
             log::debug!("unable to register user: {:?}", err);
             return Ok(HttpResponse::InternalServerError().json("unable to register user"));
@@ -154,9 +174,15 @@ async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpR
 
     match session::Session::create(
         &**client,
-        session::Session::build(&login_data.id, String::from(""))
+        &session::Session::new(&login_data.id, String::from(""))
     ).await {
-        Ok(session_id) => Ok(HttpResponse::Ok().json(session_id.to_string())),
+        Ok(session_id) => {
+            #[derive(Debug, Serialize)]
+            struct UserLoginResponse {
+                token: String,
+            }
+            Ok(HttpResponse::Ok().json(UserLoginResponse{token: session_id.to_string()}))
+        },
         Err(err) => {
             log::debug!("unable to register user: {:?}", err);
             return Ok(HttpResponse::InternalServerError().json("unable to register user"));
@@ -173,7 +199,7 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let pg_pool = postgres::create_pool();
-    postgres::migrate_down(&pg_pool).await;
+    // postgres::migrate_down(&pg_pool).await;
     postgres::migrate_up(&pg_pool).await;
 
     let address = address();
