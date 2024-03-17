@@ -1,4 +1,4 @@
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   id UUID DEFAULT uuid_generate_v4(),
   user_id UUID,
   data TEXT,

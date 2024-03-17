@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::error::Error;
 use chrono::NaiveDate;
-use tokio_postgres::{types::Date, Error as PostgresError, GenericClient, Row};
+use tokio_postgres::{Error as PostgresError, GenericClient, Row};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
@@ -64,16 +64,16 @@ impl Error for UserDataError {
 
 impl User {
     pub fn new(
-        first_name: String,
-        second_name: String,
-        birthdate: String,
-        biography: String,
-        city: String,
+        first_name: &String,
+        second_name: &String,
+        birthdate: &String,
+        biography: &String,
+        city: &String,
     ) -> Result<User, UserDataError> {
         Ok(User {
             id: Uuid::new_v4(),
-            first_name: if first_name.graphemes(true).count() <= 32 { first_name } else { return Err(UserDataError::new("first_name is too long")) },
-            second_name: if second_name.graphemes(true).count() <= 32 { second_name } else { return Err(UserDataError::new("second_name is too long")) },
+            first_name: if first_name.graphemes(true).count() <= 32 { first_name.to_string() } else { return Err(UserDataError::new("first_name is too long")) },
+            second_name: if second_name.graphemes(true).count() <= 32 { second_name.to_string() } else { return Err(UserDataError::new("second_name is too long")) },
             birthdate: match chrono::NaiveDate::parse_from_str(&birthdate, "%Y-%m-%d") {
                 Ok(birthdate) => birthdate,
                 Err(e) => {
@@ -81,8 +81,8 @@ impl User {
                     return Err(UserDataError::new("birthdate format is incorrect, should be %Y-%m-%d"))
                 }
             },
-            biography: if biography.graphemes(true).count() <= 2048 { biography } else { return Err(UserDataError::new("biography is too long")) },
-            city: if city.graphemes(true).count() <= 32 { city } else { return Err(UserDataError::new("city is too long")) },
+            biography: if biography.graphemes(true).count() <= 2048 { biography.to_string() } else { return Err(UserDataError::new("biography is too long")) },
+            city: if city.graphemes(true).count() <= 32 { city.to_string() } else { return Err(UserDataError::new("city is too long")) },
         })
     }
 
@@ -96,6 +96,14 @@ impl User {
         let stmt = client.prepare("SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE id = $1").await?;
         let row = client.query_one(&stmt, &[&Uuid::from_str(&id).unwrap()]).await?;
         Ok(User::from(row))
+    }
+
+    pub async fn search_by_first_name_and_last_name<C: GenericClient>(client: &C, first_name: &String, second_name: &String) -> Result<Vec<User>, PostgresError> {
+        let stmt = client.prepare(
+            "SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE first_name LIKE $1 AND second_name LIKE $2 ORDER BY id"
+        ).await?;
+        let rows = client.query(&stmt, &[&("%".to_owned() + &first_name + "%"), &("%".to_owned() + &second_name.to_owned() + "%")]).await?;
+        Ok(rows.into_iter().map(User::from).collect())
     }
 
     pub async fn create<C: GenericClient>(client: &C, user: &User, password: &String) -> Result<Uuid, PostgresError> {

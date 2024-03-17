@@ -46,6 +46,30 @@ async fn get_user(pool: web::Data<Pool>, path: web::Path<String>) -> HttpRespons
     }
 }
 
+#[derive(Deserialize)]
+struct UserSearchRequestQuery {
+    first_name: String,
+    second_name: String,
+}
+
+#[get("/user/search")]
+async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequestQuery>) -> HttpResponse {
+    let client = match pool.get().await {
+        Ok(client) => client,
+        Err(err) => {
+            log::debug!("unable to get postgres client: {:?}", err);
+            return HttpResponse::InternalServerError().json("unable to get postgres client");
+        }
+    };
+    match user::User::search_by_first_name_and_last_name(&**client, &search.first_name, &search.second_name).await {
+        Ok(user) => HttpResponse::Ok().json(user),
+        Err(err) => {
+            log::debug!("unable to find users: {:?}", err);
+            return HttpResponse::InternalServerError().json("unable to find users");
+        }
+    }
+}
+
 #[post("/user/register")]
 async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
@@ -57,7 +81,7 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
         body.extend_from_slice(&chunk);
     }
 
-    log::debug!("register_user(): post body: {:?}", body);
+    log::debug!("register_user: post body: {:?}", body);
 
     #[derive(Debug, Serialize, Deserialize)]
     struct UserRegisterPayload {
@@ -77,7 +101,7 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
         }
     };
     
-    log::debug!("register_user(): parsed user object: {:?}", user_data);
+    log::debug!("register_user: parsed user object: {:?}", user_data);
 
     match user::User::is_password_correct(&user_data.password) {
         Ok(result) => result,
@@ -96,11 +120,11 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
     };
 
     let user = match user::User::new(
-        user_data.first_name,
-        user_data.second_name,
-        user_data.birthdate,
-        user_data.biography,
-        user_data.city
+        &user_data.first_name,
+        &user_data.second_name,
+        &user_data.birthdate,
+        &user_data.biography,
+        &user_data.city
     ) {
         Ok(user) => user,
         Err(e) => {
@@ -139,7 +163,7 @@ async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpR
         body.extend_from_slice(&chunk);
     }
 
-    log::debug!("register_user: post body: {:?}", body);
+    log::debug!("login: post body: {:?}", body);
 
     #[derive(Debug, Serialize, Deserialize)]
     struct LoginPayload {
@@ -147,7 +171,13 @@ async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpR
         password: String,
     }
 
-    let login_data = serde_json::from_slice::<LoginPayload>(&body)?;
+    let login_data = match serde_json::from_slice::<LoginPayload>(&body) {
+        Ok(user_data) => user_data,
+        Err(err) => {
+            log::debug!("unable to parse json data: {:?}", err);
+            return Ok(HttpResponse::BadRequest().json("unable to parse json data"));
+        }
+    };
 
     log::debug!("login(): login_data: {:?}", login_data);
 
@@ -204,10 +234,19 @@ async fn main() -> std::io::Result<()> {
 
     let address = address();
     HttpServer::new(move || {
+        let json_config = web::JsonConfig::default()
+            .limit(MAX_SIZE)
+            .error_handler(|err, _req| {
+                error::InternalError::from_response(err, HttpResponse::BadRequest().finish())
+                    .into()
+            });
+
         App::new()
             .app_data(web::Data::new(pg_pool.clone()))
+            .app_data(json_config)
             .service(list_users)
             .service(get_user)
+            .service(search_user)
             .service(register_user)
             .service(login)
     })

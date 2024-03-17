@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS f_name_s_name_idx;

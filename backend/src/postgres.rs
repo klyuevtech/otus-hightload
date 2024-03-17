@@ -2,15 +2,24 @@ use deadpool_postgres::{Config, Pool};
 use tokio_postgres::NoTls;
 use tokio_postgres_migration::Migration;
 
-const SCRIPTS_UP: [(&str, &str); 3] = [(
+const SCRIPTS_UP: [(&str, &str); 6] = [(
     "0001_create-extension-uuid-ossp",
     include_str!("../migrations/0001_create-extension-uuid-ossp_up.sql"),
+),(
+    "0001_create-extension-pg_trgm",
+    include_str!("../migrations/0001_create-extension-pg_trgm_up.sql"),
 ),(
     "0001_create-users",
     include_str!("../migrations/0001_create-users_up.sql"),
 ),(
     "0001_create-sessions",
     include_str!("../migrations/0001_create-sessions_up.sql"),
+),(
+    "0001_create-index-users-f_name_s_name_idx_up",
+    include_str!("../migrations/0001_create-index-users-f_name_s_name_idx_up.sql"),
+),(
+    "0001_create-index-users-id_idx_up",
+    include_str!("../migrations/0001_create_index-users-id_idx_up.sql"),
 )];
 
 const SCRIPTS_DOWN: [(&str, &str); 2] = [(
