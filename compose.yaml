@@ -5,7 +5,8 @@ services:
       context: backend
       target: development
     environment:
-      - ADDRESS=0.0.0.0:8000
+      - HTTP_SERVER_ADDRESS=0.0.0.0:8000
+      - GRPC_SERVER_ADDRESS=0.0.0.0:9000
       - RUST_LOG=debug
       - PG_DBNAME=postgres
       - PG_HOST=db
@@ -16,6 +17,7 @@ services:
       - server-side
     ports:
       - 8000:8000
+      - 9000:9000
     volumes:
       - ./backend/src:/code/src
       - backend-cache:/code/target

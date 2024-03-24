@@ -63,6 +63,30 @@ impl Error for UserDataError {
 }
 
 impl User {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    pub fn first_name(&self) -> &str {
+        &self.first_name
+    }
+
+    pub fn second_name(&self) -> &str {
+        &self.second_name
+    }
+
+    pub fn birthdate(&self) -> &chrono::NaiveDate {
+        &self.birthdate
+    }
+
+    pub fn biography(&self) -> &str {
+        &self.biography
+    }
+
+    pub fn city(&self) -> &str {
+        &self.city
+    }
+
     pub fn new(
         first_name: &String,
         second_name: &String,

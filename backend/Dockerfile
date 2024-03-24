@@ -11,15 +11,19 @@ COPY Cargo.toml /code/Cargo.toml
 RUN cargo fetch
 COPY . /code
 
+RUN apt update && apt install -y protobuf-compiler
+
 FROM base AS development
 
 EXPOSE 8000
+EXPOSE 9000
 
 CMD [ "cargo", "run", "--offline" ]
 
 FROM base AS dev-envs
 
 EXPOSE 8000
+EXPOSE 9000
 RUN <<EOF
 apt-get update
 apt-get install -y --no-install-recommends git
@@ -43,6 +47,7 @@ FROM debian:buster-slim
 ENV ROCKET_ENV=production
 
 EXPOSE 8000
+EXPOSE 9000
 
 COPY --from=builder /code/target/release/rust-postgres /rust-postgres
 

@@ -1,8 +1,11 @@
 use actix_web::{error, get, post, web, App, Error, HttpResponse, HttpServer};
 use deadpool_postgres::Pool;
-use futures::StreamExt;
+use futures::{future, StreamExt};
 use serde::{Deserialize, Serialize};
+use user_search::user_search_server::{UserSearch, UserSearchServer};
+use user_search::{UserSearchResponse, UserSearchRequest};
 
+mod user_search;
 mod postgres;
 mod user;
 mod session;
@@ -62,7 +65,7 @@ async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequest
         }
     };
     match user::User::search_by_first_name_and_last_name(&**client, &search.first_name, &search.second_name).await {
-        Ok(user) => HttpResponse::Ok().json(user),
+        Ok(users) => HttpResponse::Ok().json(users),
         Err(err) => {
             log::debug!("unable to find users: {:?}", err);
             return HttpResponse::InternalServerError().json("unable to find users");
@@ -220,8 +223,52 @@ async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpR
     }
 }
 
-fn address() -> String {
-    std::env::var("ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".into())
+struct UserSearchService {
+    pg_pool: Pool,
+}
+
+#[tonic::async_trait]
+impl UserSearch for UserSearchService {
+    async fn search(
+        &self,
+        request: tonic::Request<UserSearchRequest>,
+    ) -> std::result::Result<
+        tonic::Response<UserSearchResponse>,
+        tonic::Status,
+    > {
+        log::debug!("Got request: {:?}", request);
+
+        let client = match self.pg_pool.get().await {
+            Ok(client) => client,
+            Err(err) => {
+                log::debug!("unable to get postgres client: {:?}", err);
+                return Err(tonic::Status::not_found("unable to get postgres client"));
+            }
+        };
+
+        let req = request.into_inner().to_owned();
+
+        let first_name = &req.first_name;
+        let second_name = &req.second_name;
+
+        match user::User::search_by_first_name_and_last_name(&**client, &first_name, &second_name).await {
+            Ok(users) => {
+                let user_data = users.into_iter().map(|user: user::User| user_search::User {
+                    id: user.id().to_string(),
+                    first_name: user.first_name().to_string(),
+                    second_name: user.second_name().to_string(),
+                    birthdate: user.birthdate().to_string(),
+                    biography: user.biography().to_string(),
+                    city: user.city().to_string(),
+                }).collect();
+                Ok(tonic::Response::new(UserSearchResponse{ data: user_data, page_number: 1, results_per_page: 50, }))
+            },
+            Err(err) => {
+                log::debug!("unable to find users: {:?}", err);
+                return Err(tonic::Status::not_found(format!("Couldn't find users by query: {}, {}", &first_name, &second_name)));
+            }
+        }
+    }
 }
 
 #[actix_web::main]
@@ -229,11 +276,20 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let pg_pool = postgres::create_pool();
+    let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
+        .unwrap_or_else(|_| "127.0.0.1:9000".into())
+        .parse::<std::net::SocketAddr>()
+        .unwrap_or_else(|_| std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)), 9000));
+
+    let grpc_server = tonic::transport::Server::builder()
+        .add_service(UserSearchServer::new(UserSearchService { pg_pool: pg_pool.clone() })).serve(grpc_address);
+
+    let pg_pool = postgres::create_pool();
     // postgres::migrate_down(&pg_pool).await;
     postgres::migrate_up(&pg_pool).await;
 
-    let address = address();
-    HttpServer::new(move || {
+    let http_address = std::env::var("HTTP_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".into());
+    let http_server = HttpServer::new(move || {
         let json_config = web::JsonConfig::default()
             .limit(MAX_SIZE)
             .error_handler(|err, _req| {
@@ -250,7 +306,11 @@ async fn main() -> std::io::Result<()> {
             .service(register_user)
             .service(login)
     })
-    .bind(&address)?
-    .run()
-    .await
+    .bind(&http_address)?
+    .run();
+
+    let _ = future::try_join(tokio::spawn(http_server), tokio::spawn(grpc_server)).await?;
+
+    Ok(())
+
 }

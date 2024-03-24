@@ -10,12 +10,14 @@ services:
       - PG_HOST=db
       - PG_USER=postgres
       - PG_PASSWORD=mysecretpassword
-      - ADDRESS=0.0.0.0:8000
+      - HTTP_SERVER_ADDRESS=0.0.0.0:8000
+      - GRPC_SERVER_ADDRESS=0.0.0.0:9000
     networks:
       - client-side
       - server-side
     ports:
       - 8000:8000
+      - 9000:9000
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
