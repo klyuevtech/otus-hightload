@@ -1,5 +1,4 @@
 use std::str::FromStr;
-
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Error, GenericClient, Row};
 use uuid::Uuid;

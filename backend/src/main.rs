@@ -1,9 +1,11 @@
-use actix_web::{error, get, post, web, App, Error, HttpResponse, HttpServer};
+use actix_web::{middleware, error, get, post, web, App, Error, HttpResponse, HttpServer};
 use deadpool_postgres::Pool;
 use futures::{future, StreamExt};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::{Deserialize, Serialize};
 use user_search::user_search_server::{UserSearch, UserSearchServer};
 use user_search::{UserSearchResponse, UserSearchRequest};
+use tonic::codec::CompressionEncoding;
 
 mod user_search;
 mod postgres;
@@ -282,11 +284,27 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or_else(|_| std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)), 9000));
 
     let grpc_server = tonic::transport::Server::builder()
-        .add_service(UserSearchServer::new(UserSearchService { pg_pool: pg_pool.clone() })).serve(grpc_address);
+        .tls_config(tonic::transport::server::ServerTlsConfig::new().identity(
+            tonic::transport::Identity::from_pem(&std::fs::read_to_string("cert.pem")?,
+            &std::fs::read_to_string("key.pem")?))
+        )
+        .unwrap()
+        .add_service(
+            UserSearchServer::new(UserSearchService { pg_pool: pg_pool.clone() })
+                .send_compressed(CompressionEncoding::Gzip)
+                .accept_compressed(CompressionEncoding::Gzip)
+        )
+        .serve(grpc_address);
 
     let pg_pool = postgres::create_pool();
     // postgres::migrate_down(&pg_pool).await;
     postgres::migrate_up(&pg_pool).await;
+
+    let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+    builder
+        .set_private_key_file("key.pem", SslFiletype::PEM)
+        .unwrap();
+    builder.set_certificate_chain_file("cert.pem").unwrap();
 
     let http_address = std::env::var("HTTP_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".into());
     let http_server = HttpServer::new(move || {
@@ -298,6 +316,7 @@ async fn main() -> std::io::Result<()> {
             });
 
         App::new()
+            .wrap(middleware::Compress::default())
             .app_data(web::Data::new(pg_pool.clone()))
             .app_data(json_config)
             .service(list_users)
@@ -306,7 +325,7 @@ async fn main() -> std::io::Result<()> {
             .service(register_user)
             .service(login)
     })
-    .bind(&http_address)?
+    .bind_openssl(&http_address, builder)?
     .run();
 
     let _ = future::try_join(tokio::spawn(http_server), tokio::spawn(grpc_server)).await?;
