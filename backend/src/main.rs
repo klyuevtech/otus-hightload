@@ -286,7 +286,6 @@ async fn main() -> std::io::Result<()> {
         )
         .serve(grpc_address);
 
-    let pg_pool = postgres::create_pool();
     // postgres::migrate_down(&pg_pool).await;
     postgres::migrate_up(&pg_pool).await;
 
