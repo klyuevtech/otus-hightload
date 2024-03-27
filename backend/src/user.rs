@@ -124,9 +124,11 @@ impl User {
 
     pub async fn search_by_first_name_and_last_name<C: GenericClient>(client: &C, first_name: &String, second_name: &String) -> Result<Vec<User>, PostgresError> {
         let stmt = client.prepare(
-            "SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE first_name LIKE $1 AND second_name LIKE $2 ORDER BY id"
+            // "SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE first_name LIKE $1 AND second_name LIKE $2 ORDER BY id"
+            "SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE (to_tsvector('russian', first_name) @@ to_tsquery('russian', $1)) AND (to_tsvector('russian', second_name) @@ to_tsquery('russian', $2)) ORDER BY id"
         ).await?;
-        let rows = client.query(&stmt, &[&("%".to_owned() + &first_name + "%"), &("%".to_owned() + &second_name.to_owned() + "%")]).await?;
+        // let rows = client.query(&stmt, &[&("%".to_owned() + &first_name + "%"), &("%".to_owned() + &second_name.to_owned() + "%")]).await?;
+        let rows = client.query(&stmt, &[&(first_name.to_owned() + ":*"), &(second_name.to_owned() + ":*")]).await?;
         Ok(rows.into_iter().map(User::from).collect())
     }
 

@@ -54,7 +54,7 @@ async fn get_user(pool: web::Data<Pool>, path: web::Path<String>) -> HttpRespons
 #[derive(Deserialize)]
 struct UserSearchRequestQuery {
     first_name: String,
-    second_name: String,
+    last_name: String,
 }
 
 #[get("/user/search")]
@@ -66,7 +66,7 @@ async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequest
             return HttpResponse::InternalServerError().json("unable to get postgres client");
         }
     };
-    match user::User::search_by_first_name_and_last_name(&**client, &search.first_name, &search.second_name).await {
+    match user::User::search_by_first_name_and_last_name(&**client, &search.first_name, &search.last_name).await {
         Ok(users) => HttpResponse::Ok().json(users),
         Err(err) => {
             log::debug!("unable to find users: {:?}", err);
@@ -86,8 +86,6 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
         body.extend_from_slice(&chunk);
     }
 
-    log::debug!("register_user: post body: {:?}", body);
-
     #[derive(Debug, Serialize, Deserialize)]
     struct UserRegisterPayload {
         first_name: String,
@@ -105,8 +103,6 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
             return Ok(HttpResponse::BadRequest().json("unable to parse json data"));
         }
     };
-    
-    log::debug!("register_user: parsed user object: {:?}", user_data);
 
     match user::User::is_password_correct(&user_data.password) {
         Ok(result) => result,
@@ -168,8 +164,6 @@ async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpR
         body.extend_from_slice(&chunk);
     }
 
-    log::debug!("login: post body: {:?}", body);
-
     #[derive(Debug, Serialize, Deserialize)]
     struct LoginPayload {
         id: String,
@@ -183,8 +177,6 @@ async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpR
             return Ok(HttpResponse::BadRequest().json("unable to parse json data"));
         }
     };
-
-    log::debug!("login(): login_data: {:?}", login_data);
 
     let client = match pool.get().await {
         Ok(client) => client,
@@ -209,7 +201,7 @@ async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpR
 
     match session::Session::create(
         &**client,
-        &session::Session::new(&login_data.id, String::from(""))
+        &session::Session::new(&login_data.id, serde_json::json!({}))
     ).await {
         Ok(session_id) => {
             #[derive(Debug, Serialize)]
@@ -238,8 +230,6 @@ impl UserSearch for UserSearchService {
         tonic::Response<UserSearchResponse>,
         tonic::Status,
     > {
-        log::debug!("Got request: {:?}", request);
-
         let client = match self.pg_pool.get().await {
             Ok(client) => client,
             Err(err) => {
@@ -251,7 +241,7 @@ impl UserSearch for UserSearchService {
         let req = request.into_inner().to_owned();
 
         let first_name = &req.first_name;
-        let second_name = &req.second_name;
+        let second_name = &req.last_name;
 
         match user::User::search_by_first_name_and_last_name(&**client, &first_name, &second_name).await {
             Ok(users) => {

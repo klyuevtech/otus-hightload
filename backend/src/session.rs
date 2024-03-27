@@ -7,21 +7,22 @@ use uuid::Uuid;
 pub struct Session {
     id: Uuid,
     user_id: Uuid,
-    data: String
+    data: serde_json::Value,
 }
 
 impl From<Row> for Session {
     fn from(row: Row) -> Self {
+        let data: serde_json::Value = row.get(2);
         Self {
             id: row.get(0),
             user_id: row.get(1),
-            data: row.get(2),
+            data,
         }
     }
 }
 
 impl Session {
-    pub fn new(user_id: &String, data: String) -> Session {
+    pub fn new(user_id: &String, data: serde_json::Value) -> Session {
         Session {
             id: Uuid::new_v4(),
             user_id: Uuid::from_str(&user_id).unwrap(),
