@@ -1,5 +1,5 @@
 use actix_web::{middleware, error, get, post, web, App, Error, HttpResponse, HttpServer};
-use deadpool_postgres::Pool;
+use deadpool_postgres::{ Config, Manager, ManagerConfig, Pool };
 use futures::{future, StreamExt};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,13 @@ struct UserSearchRequestQuery {
 }
 
 #[get("/user/search")]
-async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequestQuery>) -> HttpResponse {
+async fn search_user(pools: web::Data<Vec<Pool>>, search: web::Query<UserSearchRequestQuery>) -> HttpResponse {
+    let pool = pools.iter().reduce(|acc, pool| {
+        if acc.status().available < pool.status().available {
+            return pool;
+        }
+        return acc;
+    }).unwrap();
     let client = match pool.get().await {
         Ok(client) => client,
         Err(err) => {
@@ -66,7 +72,9 @@ async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequest
             return HttpResponse::InternalServerError().json("unable to get postgres client");
         }
     };
-    match user::User::search_by_first_name_and_last_name(&**client, &search.first_name, &search.last_name).await {
+
+    let use_fast_search = pool.status().available < 0;
+    match user::User::search_by_first_name_and_last_name(&**client, &search.first_name, &search.last_name, use_fast_search).await {
         Ok(users) => HttpResponse::Ok().json(users),
         Err(err) => {
             log::debug!("unable to find users: {:?}", err);
@@ -243,7 +251,7 @@ impl UserSearch for UserSearchService {
         let first_name = &req.first_name;
         let second_name = &req.last_name;
 
-        match user::User::search_by_first_name_and_last_name(&**client, &first_name, &second_name).await {
+        match user::User::search_by_first_name_and_last_name(&**client, &first_name, &second_name, true).await {
             Ok(users) => {
                 let user_data = users.into_iter().map(|user: user::User| user_search::User {
                     id: user.id().to_string(),
@@ -267,7 +275,11 @@ impl UserSearch for UserSearchService {
 async fn main() -> std::io::Result<()> {
     env_logger::init();
 
-    let pg_pool = postgres::create_pool();
+    let pg_pool1 = postgres::create_pool();
+    let pg_pool2 = postgres::create_pool();
+    let pg_pool3 = postgres::create_pool();
+    let pools = vec![pg_pool1, pg_pool2, pg_pool3];
+
     let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
         .unwrap_or_else(|_| "127.0.0.1:9000".into())
         .parse::<std::net::SocketAddr>()
@@ -280,14 +292,14 @@ async fn main() -> std::io::Result<()> {
         )
         .unwrap()
         .add_service(
-            UserSearchServer::new(UserSearchService { pg_pool: pg_pool.clone() })
+            UserSearchServer::new(UserSearchService { pg_pool: pools[0].clone() })
                 .send_compressed(CompressionEncoding::Gzip)
                 .accept_compressed(CompressionEncoding::Gzip)
         )
         .serve(grpc_address);
 
     // postgres::migrate_down(&pg_pool).await;
-    postgres::migrate_up(&pg_pool).await;
+    postgres::migrate_up(&pools[0]).await;
 
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
@@ -306,7 +318,7 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .wrap(middleware::Compress::default())
-            .app_data(web::Data::new(pg_pool.clone()))
+            .app_data(web::Data::new(pools.clone()))
             .app_data(json_config)
             .service(list_users)
             .service(get_user)
