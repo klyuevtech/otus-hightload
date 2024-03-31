@@ -1,1 +1,1 @@
-CREATE INDEX IF NOT EXISTS f_name_s_name_idx ON users USING gin (first_name gin_trgm_ops, second_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS users_names_gin_trgm_idx ON users USING gin (first_name gin_trgm_ops, second_name gin_trgm_ops);

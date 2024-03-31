@@ -8,7 +8,8 @@ edition = "2021"
 
 [dependencies]
 actix-web = { version = "4", features = ["openssl"] }
-deadpool-postgres = "0.9.0"
+deadpool = { version = "0.6.0" }
+deadpool-postgres = { version = "0.9.0", features = ["rt_tokio_1","rt_async-std_1","serde"] }
 env_logger = "^0.8"
 log = "^0.4"
 serde = "1.0"

@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS users_names_gin_tsvector_idx ON users USING GIN (textsearchable_first_name, textsearchable_second_name);
