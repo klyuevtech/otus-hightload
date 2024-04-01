@@ -117,6 +117,10 @@ postgres=# EXPLAIN ANALYZE SELECT id, first_name, second_name, birthdate, biogra
 (10 rows)
 ```
 
+Индекс `id_idx` может применять для сортировки по полю `id`. Тип поля `UUID`, поэтому выбрал тип индекса `BTREE` .
+
+Индекс `users_names_gin_tsvector_idx` может применяться для выборки данных по полям `textsearchable_first_name` и `textsearchable_second_name`. По полям `first_name` и `second_name` нужен полнотекстовый поиск по префиксу. Поэтому выбираем тип индекса `GIN`, который работает с данными типа tsvector. Чтобы ускорить SELECT операции и не вызывать функцию to_tsvector на каждую строку, были созданы дополнительные поля `textsearchable_first_name` и `textsearchable_second_name` с предзаполненными значениями результатов вызова to_tsvector для каждого значения соответствующего поля first_name и second_name.
+
 ---
 
 **Number of threads: 10**
@@ -219,3 +223,7 @@ postgres=# EXPLAIN ANALYZE SELECT id, first_name, second_name, birthdate, biogra
  Execution Time: 0.289 ms
 (10 rows)
 ```
+
+Индекс `id_idx` может применять для сортировки по полю `id`. Тип поля `UUID`, поэтому выбрал тип индекса `BTREE` .
+
+Индекс `users_names_gin_tsvector_idx` может применяться для выборки данных по полям `textsearchable_first_name` и `textsearchable_second_name`. По полям `first_name` и `second_name` нужен полнотекстовый поиск по префиксу. Поэтому выбираем тип индекса `GIN`, который работает с данными типа tsvector. Чтобы ускорить SELECT операции и не вызывать функцию to_tsvector на каждую строку, были созданы дополнительные поля `textsearchable_first_name` и `textsearchable_second_name` с предзаполненными значениями результатов вызова to_tsvector для каждого значения соответствующего поля first_name и second_name.
