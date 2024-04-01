@@ -7,7 +7,7 @@ services:
     environment:
       - HTTP_SERVER_ADDRESS=0.0.0.0:8000
       - GRPC_SERVER_ADDRESS=0.0.0.0:9000
-      - RUST_LOG=debug
+      # - RUST_LOG=debug
       - PG_DBNAME=postgres
       - PG_HOST=db
       - PG_USER=postgres
@@ -26,6 +26,7 @@ services:
 
   db:
     image: postgres:12-alpine
+    shm_size: 1gb
     restart: always
     environment:
       - POSTGRES_PASSWORD=mysecretpassword
@@ -33,7 +34,7 @@ services:
       - server-side
     volumes:
       - db-data:/var/lib/postgresql/data
-
+    command: postgres -c 'max_connections=500'
 networks:
   client-side: {}
   server-side: {}
