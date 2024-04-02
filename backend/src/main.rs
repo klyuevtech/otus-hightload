@@ -1,4 +1,4 @@
-use actix_web::{middleware, error, get, post, web, App, Error, HttpResponse, HttpServer};
+use actix_web::{middleware, error, web, App, Error, HttpResponse, HttpServer};
 use deadpool_postgres::Pool;
 use futures::{future, StreamExt};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
@@ -14,7 +14,6 @@ mod session;
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
 
-#[get("/user")]
 async fn list_users(pool: web::Data<Pool>) -> HttpResponse {
     let client = match pool.get().await {
         Ok(client) => client,
@@ -32,7 +31,6 @@ async fn list_users(pool: web::Data<Pool>) -> HttpResponse {
     }
 }
 
-#[get("/user/get/{id}")]
 async fn get_user(pool: web::Data<Pool>, path: web::Path<String>) -> HttpResponse {
     let id = path.parse::<String>().unwrap();
     let client = match pool.get().await {
@@ -57,7 +55,6 @@ struct UserSearchRequestQuery {
     last_name: String,
 }
 
-#[get("/user/search")]
 async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequestQuery>) -> HttpResponse {
     let client = match pool.get().await {
         Ok(client) => client,
@@ -76,7 +73,6 @@ async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequest
     }
 }
 
-#[post("/user/register")]
 async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
@@ -154,7 +150,6 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
     }
 }
 
-#[post("/login")]
 async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
@@ -269,6 +264,7 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let pool = postgres::create_pool(350);
+    let pool_replica_1 = postgres::create_pool_replica_1(350);
 
     let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
         .unwrap_or_else(|_| "127.0.0.1:9000".into())
@@ -282,13 +278,14 @@ async fn main() -> std::io::Result<()> {
         )
         .unwrap()
         .add_service(
-            UserSearchServer::new(UserSearchService { pg_pool: pool.clone() })
+            UserSearchServer::new(UserSearchService { pg_pool: pool_replica_1.clone() })
                 .send_compressed(CompressionEncoding::Gzip)
                 .accept_compressed(CompressionEncoding::Gzip)
         )
         .serve(grpc_address);
 
     // postgres::migrate_down(&pg_pool).await;
+    // postgres::migrate_down(&pool_replica_1).await;
     postgres::migrate_up(&pool).await;
 
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
@@ -299,22 +296,33 @@ async fn main() -> std::io::Result<()> {
 
     let http_address = std::env::var("HTTP_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".into());
     let http_server = HttpServer::new(move || {
-        let json_config = web::JsonConfig::default()
-            .limit(MAX_SIZE)
-            .error_handler(|err, _req| {
-                error::InternalError::from_response(err, HttpResponse::BadRequest().finish())
-                    .into()
-            });
-
         App::new()
             .wrap(middleware::Compress::default())
-            .app_data(web::Data::new(pool.clone()))
-            .app_data(json_config)
-            .service(list_users)
-            .service(get_user)
-            .service(search_user)
-            .service(register_user)
-            .service(login)
+            .service(
+                web::resource("/user")
+                    .app_data(web::Data::new(pool.clone()))
+                    .route(web::get().to(list_users))
+            )
+            .service(
+                web::resource("/user/get/{id}")
+                    .app_data(web::Data::new(pool_replica_1.clone()))
+                    .route(web::get().to(get_user))
+            )
+            .service(
+                web::resource("/user/search")
+                    .app_data(web::Data::new(pool_replica_1.clone()))
+                    .route(web::get().to(search_user))
+            )
+            .service(
+                web::resource("/user/register")
+                    .app_data(web::Data::new(pool.clone()))
+                    .route(web::post().to(register_user))
+            )
+            .service(
+                web::resource("/login")
+                    .app_data(web::Data::new(pool.clone()))
+                    .route(web::post().to(login))
+            )
     })
     .bind_openssl(&http_address, builder)?
     .run();

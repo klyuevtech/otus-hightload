@@ -1,10 +1,8 @@
-use std::arch::aarch64::uint8x16_t;
-
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use tokio_postgres::NoTls;
 use tokio_postgres_migration::Migration;
 
-const SCRIPTS_UP: [(&str, &str); 6] = [(
+const SCRIPTS_UP: [(&str, &str); 7] = [(
     "0001_create-extension-uuid-ossp",
     include_str!("../migrations/0001_create-extension-uuid-ossp_up.sql"),
 ),(
@@ -22,6 +20,9 @@ const SCRIPTS_UP: [(&str, &str); 6] = [(
 ),(
     "0001_create-index-users-id_idx_up",
     include_str!("../migrations/0001_create_index-users-id_idx_up.sql"),
+),(
+    "/0001_create_index-users_names_gin_tsvector_up",
+    include_str!("../migrations/0001_create_index-users_names_gin_tsvector_up.sql"),
 )];
 
 const SCRIPTS_DOWN: [(&str, &str); 2] = [(
@@ -49,9 +50,37 @@ fn create_config() -> tokio_postgres::Config {
     cfg
 }
 
+fn create_config_replica_1() -> tokio_postgres::Config {
+    let mut cfg = tokio_postgres::Config::new();
+    if let Ok(host) = std::env::var("PG_HOST_REPLICA_1") {
+        cfg.host(Some(host).unwrap().as_str());
+    }
+    if let Ok(dbname) = std::env::var("PG_DBNAME") {
+        cfg.dbname(Some(dbname).unwrap().as_str());
+    }
+    if let Ok(user) = std::env::var("PG_USER") {
+        cfg.user(Some(user).unwrap().as_str());
+    }
+    if let Ok(password) = std::env::var("PG_PASSWORD") {
+        cfg.password(Some(password).unwrap().as_str());
+    }
+    cfg
+}
+
 pub fn create_pool(max_size: usize) -> Pool {
     Pool::new(
         Manager::from_config(create_config(), NoTls,
+            ManagerConfig {
+                recycling_method: RecyclingMethod::Fast
+            }
+        ),
+        max_size
+    )
+}
+
+pub fn create_pool_replica_1(max_size: usize) -> Pool {
+    Pool::new(
+        Manager::from_config(create_config_replica_1(), NoTls,
             ManagerConfig {
                 recycling_method: RecyclingMethod::Fast
             }
