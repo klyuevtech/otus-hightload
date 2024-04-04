@@ -9,10 +9,12 @@ services:
       - GRPC_SERVER_ADDRESS=0.0.0.0:9000
       # - RUST_LOG=debug
       - PG_DBNAME=postgres
-      - PG_HOST=db
-      - PG_HOST_REPLICA_1=dbreplica1
+      - PG_AUTHORITY_MASTER=db:5432
+      - PG_AUTHORITY_REPLICA=dbreplica1:5432,dbreplica2:5432,192.168.1.120:5432,192.168.1.120:5432
       - PG_USER=postgres
       - PG_PASSWORD=mysecretpassword
+      - PG_MASTER_POOL_MAX_SIZE=300
+      - PG_REPLICA_POOL_MAX_SIZE=900
     networks:
       - client-side
       - server-side
@@ -37,6 +39,8 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
       - /tmp/archivedir:/tmp/archivedir
+    ports:
+      - 5432:5432
 
   dbreplica1:
     build: ./.docker/dbreplica1
@@ -44,12 +48,24 @@ services:
     restart: always
     environment:
       - POSTGRES_PASSWORD=mysecretpassword
-      - PGDATA=/var/lib/postgresql/data/replica
     networks:
       - server-side
     volumes:
-      - db-data-replica:/var/lib/postgresql/data/replica
+      - db-data-replica1:/var/lib/postgresql/data
       - /tmp/archivedir:/tmp/archivedir
+    depends_on:
+      - db
+
+  dbreplica2:
+    build: ./.docker/dbreplica2
+    shm_size: 1gb
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=mysecretpassword
+    networks:
+      - server-side
+    volumes:
+      - db-data-replica2:/var/lib/postgresql/data
     depends_on:
       - db
 
@@ -60,4 +76,5 @@ networks:
 volumes:
   backend-cache: {}
   db-data: {}
-  db-data-replica: {}
+  db-data-replica1: {}
+  db-data-replica2: {}

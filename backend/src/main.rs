@@ -14,7 +14,7 @@ mod session;
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
 
-async fn list_users(pool: web::Data<Pool>) -> HttpResponse {
+async fn list_users(pool: web::Data<&'static Pool>) -> HttpResponse {
     let client = match pool.get().await {
         Ok(client) => client,
         Err(err) => {
@@ -31,7 +31,7 @@ async fn list_users(pool: web::Data<Pool>) -> HttpResponse {
     }
 }
 
-async fn get_user(pool: web::Data<Pool>, path: web::Path<String>) -> HttpResponse {
+async fn get_user(pool: web::Data<&'static Pool>, path: web::Path<String>) -> HttpResponse {
     let id = path.parse::<String>().unwrap();
     let client = match pool.get().await {
         Ok(client) => client,
@@ -55,7 +55,7 @@ struct UserSearchRequestQuery {
     last_name: String,
 }
 
-async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequestQuery>) -> HttpResponse {
+async fn search_user(pool: web::Data<&'static Pool>, search: web::Query<UserSearchRequestQuery>) -> HttpResponse {
     let client = match pool.get().await {
         Ok(client) => client,
         Err(err) => {
@@ -73,7 +73,7 @@ async fn search_user(pool: web::Data<Pool>, search: web::Query<UserSearchRequest
     }
 }
 
-async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
+async fn register_user(pool: web::Data<&'static Pool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -150,7 +150,7 @@ async fn register_user(pool: web::Data<Pool>, mut payload: web::Payload) -> Resu
     }
 }
 
-async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
+async fn login(pool: web::Data<&'static Pool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -214,7 +214,7 @@ async fn login(pool: web::Data<Pool>, mut payload: web::Payload) -> Result<HttpR
 }
 
 struct UserSearchService {
-    pg_pool: Pool,
+    pg_pool: &'static Pool,
 }
 
 #[tonic::async_trait]
@@ -262,9 +262,7 @@ impl UserSearch for UserSearchService {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
-
-    let pool = postgres::create_pool(350);
-    let pool_replica_1 = postgres::create_pool_replica_1(350);
+    postgres::init_pools().await;
 
     let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
         .unwrap_or_else(|_| "127.0.0.1:9000".into())
@@ -278,15 +276,14 @@ async fn main() -> std::io::Result<()> {
         )
         .unwrap()
         .add_service(
-            UserSearchServer::new(UserSearchService { pg_pool: pool_replica_1.clone() })
+            UserSearchServer::new(UserSearchService { pg_pool: postgres::get_replica_pool_ref() })
                 .send_compressed(CompressionEncoding::Gzip)
                 .accept_compressed(CompressionEncoding::Gzip)
         )
         .serve(grpc_address);
 
-    // postgres::migrate_down(&pg_pool).await;
-    // postgres::migrate_down(&pool_replica_1).await;
-    postgres::migrate_up(&pool).await;
+    // postgres::migrate_down(postgres::get_master_pool_ref()).await;
+    postgres::migrate_up(postgres::get_master_pool_ref()).await;
 
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
@@ -295,32 +292,32 @@ async fn main() -> std::io::Result<()> {
     builder.set_certificate_chain_file("cert.pem").unwrap();
 
     let http_address = std::env::var("HTTP_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".into());
-    let http_server = HttpServer::new(move || {
+    let http_server = HttpServer::new(|| {
         App::new()
             .wrap(middleware::Compress::default())
             .service(
                 web::resource("/user")
-                    .app_data(web::Data::new(pool.clone()))
+                    .app_data(web::Data::new(postgres::get_replica_pool_ref()))
                     .route(web::get().to(list_users))
             )
             .service(
                 web::resource("/user/get/{id}")
-                    .app_data(web::Data::new(pool_replica_1.clone()))
+                    .app_data(web::Data::new(postgres::get_replica_pool_ref()))
                     .route(web::get().to(get_user))
             )
             .service(
                 web::resource("/user/search")
-                    .app_data(web::Data::new(pool_replica_1.clone()))
+                    .app_data(web::Data::new(postgres::get_replica_pool_ref()))
                     .route(web::get().to(search_user))
             )
             .service(
                 web::resource("/user/register")
-                    .app_data(web::Data::new(pool.clone()))
+                    .app_data(web::Data::new(postgres::get_master_pool_ref()))
                     .route(web::post().to(register_user))
             )
             .service(
                 web::resource("/login")
-                    .app_data(web::Data::new(pool.clone()))
+                    .app_data(web::Data::new(postgres::get_master_pool_ref()))
                     .route(web::post().to(login))
             )
     })
