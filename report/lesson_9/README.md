@@ -20,7 +20,7 @@ docker compose -f ./docker-compose.yaml up -d --force-recreate
 ```
 Запускаем Jmeter и получаем результат:
 ![](./assets/master_only/Screenshot%202024-05-05%20at%2010.49.37%20(2).png)
-![](./assets/master_only/Screenshot%202024-05-05%20at%2010.49.37%20.png)
+![](./assets/master_only/Screenshot%202024-05-05%20at%2010.49.37.png)
 
 Теперь возвращаем PG_AUTHORITY_REPLICA старое значение dbreplica1:5432 и перезапускаем контейнеры. Подаем нагрузку и смотрим результат:
 ![](./assets/one_replica/Screenshot%202024-05-05%20at%2010.53.27%20(2).png)
