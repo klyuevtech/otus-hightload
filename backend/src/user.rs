@@ -15,6 +15,8 @@ use argon2::{
     Argon2
 };
 
+pub const MAX_COUNT: usize = 16;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     id: Uuid,
@@ -122,21 +124,36 @@ impl User {
         Ok(User::from(row))
     }
 
-    pub async fn search_by_first_name_and_last_name<C: GenericClient>(client: &C, first_name: &String, second_name: &String, use_fast_search: bool) -> Result<Vec<User>, PostgresError> {
+    pub async fn search_by_first_name_and_last_name<C: GenericClient>(
+        client: &C,
+        first_name: &String,
+        second_name: &String,
+        use_fast_search: bool
+    // ) -> Result<[User; MAX_COUNT], PostgresError> {
+    ) -> Result<Vec<User>, PostgresError> {
+        let rows: Result<Vec<Row>, _>;
+        // let arr: Result<[Row; MAX_COUNT], _>;
         if use_fast_search {
             let stmt = client.prepare(
                 // "SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE (to_tsvector('russian', first_name) @@ to_tsquery('russian', $1)) AND (to_tsvector('russian', second_name) @@ to_tsquery('russian', $2)) ORDER BY id"
-                "SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE textsearchable_first_name @@ to_tsquery('russian', $1) AND textsearchable_second_name @@ to_tsquery('russian', $2) ORDER BY id"
+                &("SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE textsearchable_first_name @@ to_tsquery('russian', $1) AND textsearchable_second_name @@ to_tsquery('russian', $2) ORDER BY id LIMIT ".to_owned() + MAX_COUNT.to_string().as_str())
             ).await?;
-            let rows = client.query(&stmt, &[&(first_name.to_owned() + ":*"), &(second_name.to_owned() + ":*")]).await?;
-            Ok(rows.into_iter().map(User::from).collect())
+            rows = client.query(
+                &stmt,
+                &[&(first_name.to_owned() + ":*"), &(second_name.to_owned() + ":*")]
+            ).await;
         } else {
             let stmt = client.prepare(
-                "SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE first_name ILIKE $1 AND second_name ILIKE $2 ORDER BY id"
+                &("SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE first_name ILIKE $1 AND second_name ILIKE $2 ORDER BY id LIMIT ".to_owned() + MAX_COUNT.to_string().as_str())
             ).await?;
-            let rows = client.query(&stmt, &[&("%".to_owned() + &first_name + "%"), &("%".to_owned() + &second_name.to_owned() + "%")]).await?;
-            Ok(rows.into_iter().map(User::from).collect())
+            rows = client.query(
+                &stmt,
+                &[&("%".to_owned() + &first_name + "%"), &("%".to_owned() + &second_name.to_owned() + "%")]
+            ).await;
         }
+        // arr = rows.expect("SQL query execution failed").try_into();
+        // Ok(arr.expect("Unable to create User array").map(User::from))
+        Ok(rows.expect("SQL query execution failed").into_iter().map(User::from).collect())
     }
 
     pub async fn create<C: GenericClient>(client: &C, user: &User, password: &String) -> Result<Uuid, PostgresError> {

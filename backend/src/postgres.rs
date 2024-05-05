@@ -84,7 +84,7 @@ fn create_config(user: &str, password: &str, hosts: Vec<&str>, dbname: &str) -> 
     let mut cfg = tokio_postgres::Config::new();
     hosts.into_iter().for_each(|authority| {
         let (host, port) = authority.split_once(':')
-            .expect("Resource authority is specified incorrectly. Correct format should be: host1:port1,host2:port2...");
+            .expect(&("Resource authority is specified incorrectly. Correct format should be: 'host1:port1,host2:port2...'. Got: ".to_owned() + &authority),);
 
         cfg.host(host);
         cfg.port(u16::from_str_radix(port, 10).expect("Port is not specified or incorrect"));

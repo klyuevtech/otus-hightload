@@ -1,0 +1,186 @@
+#!/usr/bin/env python
+
+"""
+    Setup file for patroni
+"""
+
+import inspect
+import logging
+import os
+import sys
+
+from setuptools import Command, find_packages, setup
+
+__location__ = os.path.join(os.getcwd(), os.path.dirname(inspect.getfile(inspect.currentframe())))
+
+NAME = 'patroni'
+MAIN_PACKAGE = NAME
+DESCRIPTION = 'PostgreSQL High-Available orchestrator and CLI'
+LICENSE = 'The MIT License'
+URL = 'https://github.com/zalando/patroni'
+AUTHOR = 'Alexander Kukushkin, Polina Bungina'
+AUTHOR_EMAIL = 'akukushkin@microsoft.com, polina.bungina@zalando.de'
+KEYWORDS = 'etcd governor patroni postgresql postgres ha haproxy confd' +\
+    ' zookeeper exhibitor consul streaming replication kubernetes k8s'
+
+EXTRAS_REQUIRE = {'aws': ['boto3'], 'etcd': ['python-etcd'], 'etcd3': ['python-etcd'],
+                  'consul': ['python-consul'], 'exhibitor': ['kazoo'], 'zookeeper': ['kazoo'],
+                  'kubernetes': [], 'raft': ['pysyncobj', 'cryptography'], 'jsonlogger': ['python-json-logger']}
+
+# Add here all kinds of additional classifiers as defined under
+# https://pypi.python.org/pypi?%3Aaction=list_classifiers
+CLASSIFIERS = [
+    'Development Status :: 5 - Production/Stable',
+    'Environment :: Console',
+    'Intended Audience :: Developers',
+    'Intended Audience :: System Administrators',
+    'License :: OSI Approved :: MIT License',
+    'Operating System :: MacOS',
+    'Operating System :: POSIX :: Linux',
+    'Operating System :: POSIX :: BSD :: FreeBSD',
+    'Operating System :: Microsoft :: Windows',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.6',
+    'Programming Language :: Python :: 3.7',
+    'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: Implementation :: CPython',
+]
+
+CONSOLE_SCRIPTS = ['patroni = patroni.__main__:main',
+                   'patronictl = patroni.ctl:ctl',
+                   'patroni_raft_controller = patroni.raft_controller:main',
+                   "patroni_wale_restore = patroni.scripts.wale_restore:main",
+                   "patroni_aws = patroni.scripts.aws:main",
+                   "patroni_barman = patroni.scripts.barman.cli:main"]
+
+
+class _Command(Command):
+    user_options = []
+
+    def initialize_options(self):
+        pass
+
+    def finalize_options(self):
+        pass
+
+
+class Flake8(_Command):
+
+    def package_files(self):
+        seen_package_directories = ()
+        directories = self.distribution.package_dir or {}
+        empty_directory_exists = "" in directories
+        packages = self.distribution.packages or []
+        for package in packages:
+            if package in directories:
+                package_directory = directories[package]
+            elif empty_directory_exists:
+                package_directory = os.path.join(directories[""], package)
+            else:
+                package_directory = package
+
+            if not package_directory.startswith(seen_package_directories):
+                seen_package_directories += (package_directory + ".",)
+                yield package_directory
+
+    def targets(self):
+        return [package for package in self.package_files()] + ['tests', 'features', 'setup.py']
+
+    def run(self):
+        from flake8.main.cli import main
+
+        logging.getLogger().setLevel(logging.ERROR)
+        raise SystemExit(main(self.targets()))
+
+
+class PyTest(_Command):
+
+    def run(self):
+        try:
+            import pytest
+        except Exception:
+            raise RuntimeError('py.test is not installed, run: pip install pytest')
+
+        logging.getLogger().setLevel(logging.WARNING)
+
+        args = ['--verbose', 'tests', '--doctest-modules', MAIN_PACKAGE] +\
+            ['-s' if logging.getLogger().getEffectiveLevel() < logging.WARNING else '--capture=fd'] +\
+            ['--cov', MAIN_PACKAGE, '--cov-report', 'term-missing', '--cov-report', 'xml']
+
+        errno = pytest.main(args=args)
+        sys.exit(errno)
+
+
+def read(fname):
+    with open(os.path.join(__location__, fname), encoding='utf-8') as fd:
+        return fd.read()
+
+
+def get_versions():
+    old_modules = sys.modules.copy()
+    try:
+        from patroni import MIN_PSYCOPG2, MIN_PSYCOPG3
+        from patroni.version import __version__
+        return __version__, MIN_PSYCOPG2, MIN_PSYCOPG3
+    finally:
+        sys.modules.clear()
+        sys.modules.update(old_modules)
+
+
+def main():
+    logging.basicConfig(format='%(message)s', level=os.getenv('LOGLEVEL', logging.WARNING))
+
+    install_requires = []
+    for r in read('requirements.txt').split('\n'):
+        r = r.strip()
+        if r == '':
+            continue
+        extra = False
+        for e, deps in EXTRAS_REQUIRE.items():
+            for i, v in enumerate(deps):
+                if r.startswith(v):
+                    deps[i] = r
+                    EXTRAS_REQUIRE[e] = deps
+                    extra = True
+        if not extra:
+            install_requires.append(r)
+
+    # Just for convenience, if someone wants to install dependencies for all extras
+    EXTRAS_REQUIRE['all'] = list({e for extras in EXTRAS_REQUIRE.values() for e in extras})
+
+    patroni_version, min_psycopg2, min_psycopg3 = get_versions()
+
+    # Make it possible to specify psycopg dependency as extra
+    for name, version in {'psycopg[binary]': min_psycopg3, 'psycopg2': min_psycopg2, 'psycopg2-binary': None}.items():
+        EXTRAS_REQUIRE[name] = [name + ('>=' + '.'.join(map(str, version)) if version else '')]
+    EXTRAS_REQUIRE['psycopg3'] = EXTRAS_REQUIRE.pop('psycopg[binary]')
+
+    setup(
+        name=NAME,
+        version=patroni_version,
+        url=URL,
+        author=AUTHOR,
+        author_email=AUTHOR_EMAIL,
+        description=DESCRIPTION,
+        license=LICENSE,
+        keywords=KEYWORDS,
+        long_description=read('README.rst'),
+        classifiers=CLASSIFIERS,
+        packages=find_packages(exclude=['tests', 'tests.*']),
+        package_data={MAIN_PACKAGE: [
+            "postgresql/available_parameters/*.yml",
+            "postgresql/available_parameters/*.yaml",
+        ]},
+        install_requires=install_requires,
+        extras_require=EXTRAS_REQUIRE,
+        cmdclass={'test': PyTest, 'flake8': Flake8},
+        entry_points={'console_scripts': CONSOLE_SCRIPTS},
+    )
+
+
+if __name__ == '__main__':
+    main()
