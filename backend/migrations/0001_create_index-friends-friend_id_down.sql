@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS friends_friend_id_idx;

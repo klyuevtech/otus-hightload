@@ -30,10 +30,10 @@ impl Session {
         }
     }
 
-    pub async fn get_by_id<C: GenericClient,>(client: &C, id: String) -> Result<Session, Error> {
+    pub async fn get_by_id<C: GenericClient,>(client: &C, id: &str) -> Result<Session, Error> {
         let stmt = client.prepare("SELECT * FROM sessions WHERE id = $1").await?;
 
-        let row = client.query_one(&stmt, &[&Uuid::from_str(&id).unwrap()]).await?;
+        let row = client.query_one(&stmt, &[&Uuid::from_str(id).unwrap()]).await?;
 
         Ok(Session::from(row))
     }
@@ -51,5 +51,9 @@ impl Session {
         ).await?;
 
         Ok(id)
+    }
+
+    pub fn get_user_id(&self) -> Uuid {
+        self.user_id
     }
 }

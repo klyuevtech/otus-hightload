@@ -1,5 +1,16 @@
 name: rust-postgres
 services:
+  redis:
+    build:
+      context: ./redis
+    networks:
+      - server-side
+    # ports:
+    #   - '6379:6379'
+  rabbitmq:
+    image: rabbitmq
+    networks:
+      - server-side
   backend:
     build:
       context: ../backend
@@ -8,15 +19,16 @@ services:
     environment:
       - HTTP_SERVER_ADDRESS=0.0.0.0:8000
       - GRPC_SERVER_ADDRESS=0.0.0.0:9000
-      # - RUST_LOG=debug
+      - RUST_LOG=debug
       - PG_DBNAME=postgres
       - PG_AUTHORITY_MASTER=db:5432
-      # - PG_AUTHORITY_REPLICA=dbreplica1:5432,dbreplica2:5432,192.168.1.120:5432
-      - PG_AUTHORITY_REPLICA=dbreplica1:5432
+      - PG_AUTHORITY_REPLICA=dbreplica1:5432,dbreplica2:5432
+      # - PG_AUTHORITY_REPLICA=dbreplica1:5432
       - PG_USER=postgres
       - PG_PASSWORD=mysecretpassword
       - PG_MASTER_POOL_MAX_SIZE=300
       - PG_REPLICA_POOL_MAX_SIZE=900
+      - POSTS_FEED_CACHE_REDIS_URL=redis://redis:6379
     networks:
       - client-side
       - server-side

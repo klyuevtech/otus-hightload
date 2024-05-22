@@ -25,6 +25,11 @@ prost = "0.12.3"
 prost-types = "0.12.3"
 tokio = "1.36.0"
 openssl = { version = "0.10" }
+actix-web-httpauth = "0.8.1"
+redis = "0.25.3"
+deadpool-redis = "0.15.1"
+amqprs = "1.6.1"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dependencies.uuid]
 version = "1.7.0"

@@ -3,7 +3,7 @@ use tokio_postgres::{config::LoadBalanceHosts, NoTls};
 use tokio_postgres_migration::Migration;
 use tokio::sync::OnceCell;
 
-const SCRIPTS_UP: [(&str, &str); 7] = [(
+const SCRIPTS_UP: [(&str, &str); 10] = [(
     "0001_create-extension-uuid-ossp",
     include_str!("../migrations/0001_create-extension-uuid-ossp_up.sql"),
 ),(
@@ -22,8 +22,17 @@ const SCRIPTS_UP: [(&str, &str); 7] = [(
     "0001_create-index-users-id_idx_up",
     include_str!("../migrations/0001_create_index-users-id_idx_up.sql"),
 ),(
-    "/0001_create_index-users_names_gin_tsvector_up",
+    "0001_create_index-users_names_gin_tsvector_up",
     include_str!("../migrations/0001_create_index-users_names_gin_tsvector_up.sql"),
+),(
+    "0001_create-friends_up",
+    include_str!("../migrations/0001_create-friends_up.sql"),
+),(
+    "0001_create_index-users_names_gin_tsvector_up",
+    include_str!("../migrations/0001_create_index-friends-friend_id_up.sql"),
+),(
+    "0001_create_posts_up",
+    include_str!("../migrations/0001_create_posts_up.sql"),
 )];
 
 const SCRIPTS_DOWN: [(&str, &str); 2] = [(
