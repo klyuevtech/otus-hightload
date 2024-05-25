@@ -9,14 +9,19 @@ use tokio_postgres::{Error as PostgresError, GenericClient, Row};
 use tonic::async_trait;
 use uuid::Uuid;
 use crate::{friend, postgres, rabbitmq, redis};
+use lazy_static::lazy_static;
 
-pub static FEED_LENGTH: i64 = 1000;
-pub static FEED_CACHE_KEY_PREFIX: &str = "feed:";
+pub const FEED_LENGTH: i64 = 1000;
+pub const FEED_CACHE_KEY_PREFIX: &str = "feed:";
 
-pub static FEED_QUEUE_NAME: &str = "amqprs.examples.basic";
-pub static FEED_QUEUE_EXCHANGE_NAME: &str = "amq.topic";
-pub static FEED_QUEUE_ROUTING_KEY: &str = "amqprs.example";
-pub static FEED_QUEUE_CONSUMER_TAG: &str = "example_basic_pub_sub";
+pub const FEED_QUEUE_NAME: &str = "amqprs.examples.basic";
+pub const FEED_QUEUE_EXCHANGE_NAME: &str = "amq.topic";
+pub const FEED_QUEUE_ROUTING_KEY: &str = "amqprs.example";
+pub const FEED_QUEUE_CONSUMER_TAG: &str = "example_basic_pub_sub";
+
+lazy_static! {
+    pub static ref FEED_ONE_POST_PER_USER: bool = std::env::var("POSTS_FEED_ONE_POST_PER_USER").unwrap_or_else(|_| "true".to_string()).as_str() == "true";
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Post {
@@ -156,7 +161,13 @@ impl Post {
                 &[user_id, &self::FEED_LENGTH]
             ).await?;
 
-            let posts: Vec<_> = rows.iter().map(Post::from).collect();
+            let mut posts: Vec<Post> = rows
+                .iter()
+                .map(Post::from)
+                .collect::<Vec<Post>>();
+            if true == *FEED_ONE_POST_PER_USER {
+                posts.dedup_by(|post1, post2| post1.user_id == post2.user_id);
+            }
 
             if is_cache_available {
                 for post in posts.iter() {
@@ -417,8 +428,14 @@ impl AsyncConsumer for FeedConsumer {
                 for friend in friends.iter() {
                     let cache_key = self::FEED_CACHE_KEY_PREFIX.to_string() + friend.get_user_id().to_string().as_str();
                     log::debug!("Updating cache key: '{}'", cache_key);
-                    redis::l_push(&cache_key, serde_json::to_value(&post).unwrap().to_string().as_str(), &mut redis_connection).await.unwrap();
-                    redis::l_trim(&cache_key, &(0 as usize), &(self::FEED_LENGTH as usize), &mut redis_connection).await.unwrap();
+                    if true == *FEED_ONE_POST_PER_USER {
+                        let cache_key = self::FEED_CACHE_KEY_PREFIX.to_string() + friend.get_user_id().to_string().as_str();
+                        log::debug!("Deleting cache key: '{}'", cache_key);
+                        redis::del(&cache_key, &mut redis_connection).await.unwrap();
+                    } else {
+                        redis::l_push(&cache_key, serde_json::to_value(&post).unwrap().to_string().as_str(), &mut redis_connection).await.unwrap();
+                        redis::l_trim(&cache_key, &(0 as usize), &(self::FEED_LENGTH as usize), &mut redis_connection).await.unwrap();
+                    }
                 }
             },
             PostEvent::UPDATED => {
@@ -427,7 +444,7 @@ impl AsyncConsumer for FeedConsumer {
                 let friends = friend::Friend::get_by_friend_id(&**pg_client, &post.user_id).await.unwrap();
                 for friend in friends.iter() {
                     let cache_key = self::FEED_CACHE_KEY_PREFIX.to_string() + friend.get_user_id().to_string().as_str();
-                    log::debug!("Updating cache key: '{}'", cache_key);
+                    log::debug!("Deleting cache key: '{}'", cache_key);
                     redis::del(&cache_key, &mut redis_connection).await.unwrap();
                 }
             },
@@ -437,7 +454,7 @@ impl AsyncConsumer for FeedConsumer {
                 let friends = friend::Friend::get_by_friend_id(&**pg_client, &post.user_id).await.unwrap();
                 for friend in friends.iter() {
                     let cache_key = self::FEED_CACHE_KEY_PREFIX.to_string() + friend.get_user_id().to_string().as_str();
-                    log::debug!("Updating cache key: '{}'", cache_key);
+                    log::debug!("Deleting cache key: '{}'", cache_key);
                     redis::del(&cache_key, &mut redis_connection).await.unwrap();
                 }
             }
@@ -445,10 +462,9 @@ impl AsyncConsumer for FeedConsumer {
     }
 }
 
-pub async fn create_pub_sub(queue_name: &str) {
-    let args = BasicConsumeArguments::new(&queue_name, self::FEED_QUEUE_CONSUMER_TAG);
+pub async fn create_pub_sub() {
+    let args = BasicConsumeArguments::new(self::FEED_QUEUE_NAME, self::FEED_QUEUE_CONSUMER_TAG);
     rabbitmq::create_pub_sub(
-        self::FEED_QUEUE_NAME,
         self::FEED_QUEUE_EXCHANGE_NAME,
         self::FEED_QUEUE_ROUTING_KEY,
         FeedConsumer::new(args.no_ack),

@@ -53,7 +53,6 @@ pub fn get_connection_ref() -> &'static Connection {
 }
 
 pub async fn create_pub_sub(
-    queue_name: &str,
     exchange_name: &str,
     routing_key: &str,
     consumer: impl AsyncConsumer + std::marker::Send + 'static,
@@ -62,7 +61,7 @@ pub async fn create_pub_sub(
     init_connection().await;
     let channel = self::open_channel().await;
     channel
-        .queue_declare(QueueDeclareArguments::durable_client_named(queue_name,))
+        .queue_declare(QueueDeclareArguments::durable_client_named(&args.queue,))
         // .queue_declare(QueueDeclareArguments::default())
         .await
         .unwrap()
@@ -70,7 +69,7 @@ pub async fn create_pub_sub(
 
     channel
         .queue_bind(QueueBindArguments::new(
-            queue_name,
+            &args.queue,
             exchange_name,
             routing_key,
         ))

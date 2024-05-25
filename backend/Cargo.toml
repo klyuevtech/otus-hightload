@@ -30,6 +30,7 @@ redis = "0.25.3"
 deadpool-redis = "0.15.1"
 amqprs = "1.6.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+lazy_static = "1.4.0"
 
 [dependencies.uuid]
 version = "1.7.0"

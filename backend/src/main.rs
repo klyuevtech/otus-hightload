@@ -629,7 +629,7 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
     postgres::init_pools().await;
     redis::init_pool().await;
-    post::create_pub_sub(post::FEED_QUEUE_NAME).await;
+    post::create_pub_sub().await;
 
     let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
         .unwrap_or_else(|_| "127.0.0.1:9000".into())
