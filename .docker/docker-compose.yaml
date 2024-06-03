@@ -8,7 +8,10 @@ services:
     # ports:
     #   - '6379:6379'
   rabbitmq:
-    image: rabbitmq
+    build: ./rabbitmq
+    ports:
+      - '5672:5672'
+      - '15672:15672'
     networks:
       - server-side
   backend:
@@ -19,6 +22,7 @@ services:
     environment:
       - HTTP_SERVER_ADDRESS=0.0.0.0:8000
       - GRPC_SERVER_ADDRESS=0.0.0.0:9000
+      - WS_SERVER_ADDRESS=0.0.0.0:8087
       - RUST_LOG=debug
       - PG_DBNAME=postgres
       - PG_AUTHORITY_MASTER=db:5432
@@ -35,6 +39,7 @@ services:
     ports:
       - 8000:8000
       - 9000:9000
+      - 8087:8087
     volumes:
       - ../backend/src:/code/src
       - backend-cache:/code/target

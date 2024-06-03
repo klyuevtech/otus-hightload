@@ -1,3 +1,3 @@
-FROM rabbitmq
-COPY rabbitmq.conf /etc/rabbitmq/rabbitmq.conf
+FROM rabbitmq:management
+RUN rabbitmq-plugins enable --offline rabbitmq_mqtt rabbitmq_federation_management rabbitmq_stomp
 CMD [ "rabbitmq-server" ]

@@ -1,26 +1,28 @@
 use std::{cmp, fmt};
 use std::error::Error;
-use amqprs::channel::{ BasicAckArguments, BasicConsumeArguments, Channel};
+use amqprs::channel::{BasicAckArguments, BasicConsumeArguments, Channel};
 use amqprs::consumer::AsyncConsumer;
 use amqprs::{BasicProperties, Deliver};
 use deadpool_redis::Connection;
 use serde::{Deserialize, Serialize};
+use tokio::sync::OnceCell;
 use tokio_postgres::{Error as PostgresError, GenericClient, Row};
 use tonic::async_trait;
 use uuid::Uuid;
-use crate::{friend, postgres, rabbitmq, redis};
 use lazy_static::lazy_static;
+
+use crate::{friend, postgres, rabbitmq, redis, websocket};
 
 pub const FEED_LENGTH: i64 = 1000;
 pub const FEED_CACHE_KEY_PREFIX: &str = "feed:";
 
-pub const FEED_QUEUE_NAME: &str = "amqprs.examples.basic";
-pub const FEED_QUEUE_EXCHANGE_NAME: &str = "amq.topic";
-pub const FEED_QUEUE_ROUTING_KEY: &str = "amqprs.example";
-pub const FEED_QUEUE_CONSUMER_TAG: &str = "example_basic_pub_sub";
+pub const FEED_QUEUE_NAME: &str = "feed.amqprs.post";
+pub const FEED_QUEUE_EXCHANGE_NAME: &str = "feed.amq.topic.post";
+pub const FEED_QUEUE_ROUTING_KEY_PREFIX: &str = "feed.userid.";
+pub const FEED_QUEUE_CONSUMER_TAG: &str = "feed_sub_pub";
 
 lazy_static! {
-    pub static ref FEED_ONE_POST_PER_USER: bool = std::env::var("POSTS_FEED_ONE_POST_PER_USER").unwrap_or_else(|_| "true".to_string()).as_str() == "true";
+    pub static ref FEED_ONE_POST_PER_USER: bool = std::env::var("POSTS_FEED_ONE_POST_PER_USER").unwrap_or_else(|_| "false".to_string()).as_str() == "true";
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -90,6 +92,7 @@ enum PostEvent {
 struct PostEventMessage {
     event: PostEvent,
     post_id: Uuid,
+    post: Post,
 }
 
 impl Post {
@@ -288,12 +291,13 @@ impl Post {
         let post_id = rows.iter().next().unwrap().get(0);
 
         self::publish_message(
+            post.user_id.to_string().as_str(),
             serde_json::to_value(PostEventMessage {
                 event: PostEvent::CREATED,
                 post_id,
+                post: post.clone(),
             }).unwrap().to_string().as_str(),
-            self::FEED_QUEUE_EXCHANGE_NAME,
-            self::FEED_QUEUE_ROUTING_KEY
+            client,
         ).await;
 
         Ok(post_id)
@@ -312,12 +316,13 @@ impl Post {
         // Post::cache_invalidate_by_friend_user_id(client, redis_connection, &post.user_id).await.unwrap();
 
         self::publish_message(
+            post.user_id.to_string().as_str(),
             serde_json::to_value(PostEventMessage {
                 event: PostEvent::UPDATED,
                 post_id: post.id,
+                post: post.clone(),
             }).unwrap().to_string().as_str(),
-            self::FEED_QUEUE_EXCHANGE_NAME,
-            self::FEED_QUEUE_ROUTING_KEY
+            client,
         ).await;
 
         Ok(0 < rows_count)
@@ -336,12 +341,13 @@ impl Post {
         // Post::cache_invalidate_by_friend_user_id(client, redis_connection, &post.user_id).await.unwrap();
 
         self::publish_message(
+            post.user_id.to_string().as_str(),
             serde_json::to_value(PostEventMessage {
                 event: PostEvent::DELETED,
                 post_id: post.id,
+                post: post.clone(),
             }).unwrap().to_string().as_str(),
-            self::FEED_QUEUE_EXCHANGE_NAME,
-            self::FEED_QUEUE_ROUTING_KEY
+            client,
         ).await;
 
         Ok(post.id)
@@ -365,6 +371,7 @@ impl Post {
     }
 }
 
+#[derive(Debug)]
 pub struct FeedConsumer {
     no_ack: bool,
 }
@@ -387,18 +394,11 @@ impl AsyncConsumer for FeedConsumer {
         content: Vec<u8>,
     ) {
         log::info!(
-            "consume delivery {} on channel {}, content size: {}",
+            "FeedConsumer: consume delivery {} on channel {}, content size: {}",
             deliver,
             channel,
             content.len(),
         );
-
-        // ack explicitly if manual ack
-        if !self.no_ack {
-            log::info!("ack to delivery {} on channel {}", deliver, channel);
-            let args = BasicAckArguments::new(deliver.delivery_tag(), false);
-            channel.basic_ack(args).await.unwrap();
-        }
 
         let pg_pool = postgres::get_replica_pool_ref();
         let pg_client = match pg_pool.get().await {
@@ -422,7 +422,8 @@ impl AsyncConsumer for FeedConsumer {
         let post_event_message: PostEventMessage = serde_json::from_str(String::from_utf8(content).unwrap().as_str()).unwrap();
         match post_event_message.event {
             PostEvent::CREATED => {
-                let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
+                // let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
+                let post: Post = post_event_message.post;
                 log::debug!("Adding post to cache: {:?}", post);
                 let friends = friend::Friend::get_by_friend_id(&**pg_client, &post.user_id).await.unwrap();
                 for friend in friends.iter() {
@@ -439,7 +440,8 @@ impl AsyncConsumer for FeedConsumer {
                 }
             },
             PostEvent::UPDATED => {
-                let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
+                // let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
+                let post: Post = post_event_message.post;
                 log::debug!("Updating post to cache: {:?}", post);
                 let friends = friend::Friend::get_by_friend_id(&**pg_client, &post.user_id).await.unwrap();
                 for friend in friends.iter() {
@@ -449,7 +451,8 @@ impl AsyncConsumer for FeedConsumer {
                 }
             },
             PostEvent::DELETED => {
-                let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
+                // let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
+                let post: Post = post_event_message.post;
                 log::debug!("Removing post to cache: {:?}", post);
                 let friends = friend::Friend::get_by_friend_id(&**pg_client, &post.user_id).await.unwrap();
                 for friend in friends.iter() {
@@ -459,19 +462,55 @@ impl AsyncConsumer for FeedConsumer {
                 }
             }
         }
+
+        // ack explicitly if manual ack
+        if !self.no_ack {
+            log::info!("FeedConsumer: ack to delivery {} on channel {}", deliver, channel);
+            let args = BasicAckArguments::new(deliver.delivery_tag(), false);
+            channel.basic_ack(args).await.unwrap();
+        }
     }
 }
 
 pub async fn create_pub_sub() {
-    let args = BasicConsumeArguments::new(self::FEED_QUEUE_NAME, self::FEED_QUEUE_CONSUMER_TAG);
-    rabbitmq::create_pub_sub(
+    rabbitmq::create_queue(self::FEED_QUEUE_NAME).await;
+
+    rabbitmq::bind_queue(
         self::FEED_QUEUE_EXCHANGE_NAME,
-        self::FEED_QUEUE_ROUTING_KEY,
-        FeedConsumer::new(args.no_ack),
-        args
+        self::FEED_QUEUE_NAME,
+        (self::FEED_QUEUE_ROUTING_KEY_PREFIX.to_owned() + "all").as_str()
     ).await;
+
+    {
+        let args = BasicConsumeArguments::new(FEED_QUEUE_NAME, FEED_QUEUE_CONSUMER_TAG);
+        rabbitmq::add_consumer(
+            rabbitmq::get_channel_ref().await.lock().await.first().unwrap(),
+            FeedConsumer::new(args.no_ack),
+            args
+        ).await;
+    }
 }
 
-pub async fn publish_message(message: &str, exchange_name: &str, routing_key: &str) {
-    rabbitmq::publish_message(message, exchange_name, routing_key).await;
+pub async fn publish_message<C: GenericClient>(entity_id: &str, message: &str, pg_client: &C) {
+    {
+        rabbitmq::publish_message(
+            rabbitmq::get_channel_ref().await.lock().await.first().unwrap(),
+            message,
+            self::FEED_QUEUE_EXCHANGE_NAME,
+            (self::FEED_QUEUE_ROUTING_KEY_PREFIX.to_owned() + "all").as_str()
+        ).await;
+    }
+
+    {
+        let user_id = Uuid::parse_str(entity_id).unwrap();
+        let users = friend::Friend::get_by_friend_id(pg_client, &user_id).await.unwrap();
+        for user in users.iter() {
+            rabbitmq::publish_message(
+                rabbitmq::get_channel_ref().await.lock().await.first().unwrap(),
+                message,
+                websocket::FEED_WS_QUEUE_EXCHANGE_NAME,
+                (self::FEED_QUEUE_ROUTING_KEY_PREFIX.to_owned() + user.get_user_id().to_string().as_str()).as_str()
+            ).await;
+        }
+    }
 }

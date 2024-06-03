@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use actix_web::{middleware, error, web, App, Error, HttpResponse, HttpServer};
+use actix_web::{error, http, middleware, web, App, Error, HttpResponse, HttpServer};
 use deadpool_postgres::Pool as PostgresPool;
 use deadpool_redis::Pool as RedisPool;
 use futures::{future, StreamExt};
@@ -10,6 +10,7 @@ use user_search::user_search_server::{UserSearch, UserSearchServer};
 use user_search::{UserSearchResponse, UserSearchRequest};
 use tonic::codec::CompressionEncoding;
 use actix_web_httpauth::extractors::bearer::{self, BearerAuth};
+use amqprs::channel::Channel;
 
 mod user_search;
 mod postgres;
@@ -19,6 +20,7 @@ mod friend;
 mod post;
 mod redis;
 mod rabbitmq;
+mod websocket;
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
 
@@ -391,7 +393,12 @@ struct PostFeedRequestQuery {
     limit: usize,
 }
 
-async fn post_feed(pg_pool: web::Data<&'static PostgresPool>, search: web::Query<PostFeedRequestQuery>, auth: BearerAuth, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
+async fn post_feed(
+    pg_pool: web::Data<&'static PostgresPool>,
+    search: web::Query<PostFeedRequestQuery>,
+    auth: BearerAuth,
+    redis_pool: web::Data<&'static RedisPool>,
+) -> Result<HttpResponse, Error> {
     let pg_client = match pg_pool.get().await {
         Ok(client) => client,
         Err(err) => {
@@ -422,7 +429,12 @@ async fn post_feed(pg_pool: web::Data<&'static PostgresPool>, search: web::Query
     Ok(HttpResponse::Ok().json(feed))
 }
 
-async fn post_create(pg_pool: web::Data<&'static PostgresPool>, mut payload: web::Payload, auth: BearerAuth, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
+async fn post_create(
+    pg_pool: web::Data<&'static PostgresPool>,
+    mut payload: web::Payload,
+    auth: BearerAuth,
+    redis_pool: web::Data<&'static RedisPool>,
+) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -506,7 +518,13 @@ async fn post_get(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<Str
     Ok(HttpResponse::Ok().json(post))
 }
 
-async fn post_update(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<String>, mut payload: web::Payload, auth: BearerAuth, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
+async fn post_update(
+    pg_pool: web::Data<&'static PostgresPool>,
+    path: web::Path<String>,
+    mut payload: web::Payload,
+    auth: BearerAuth,
+    redis_pool: web::Data<&'static RedisPool>,
+) -> Result<HttpResponse, Error> {
     let post_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
         Ok(val) => val,
         Err(_err) => return Ok(HttpResponse::InternalServerError().json("internal error")),
@@ -577,7 +595,12 @@ async fn post_update(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<
     }
 }
 
-async fn post_delete(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<String>, auth: BearerAuth, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
+async fn post_delete(
+    pg_pool: web::Data<&'static PostgresPool>,
+    path: web::Path<String>,
+    auth: BearerAuth,
+    redis_pool: web::Data<&'static RedisPool>,
+) -> Result<HttpResponse, Error> {
     let post_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
         Ok(val) => val,
         Err(_err) => return Ok(HttpResponse::InternalServerError().json("internal error")),
@@ -629,25 +652,26 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
     postgres::init_pools().await;
     redis::init_pool().await;
+    rabbitmq::create_pub_sub().await;
     post::create_pub_sub().await;
 
-    let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
-        .unwrap_or_else(|_| "127.0.0.1:9000".into())
-        .parse::<std::net::SocketAddr>()
-        .unwrap_or_else(|_| std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)), 9000));
+    // let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
+    //     .unwrap_or_else(|_| "127.0.0.1:9000".into())
+    //     .parse::<std::net::SocketAddr>()
+    //     .unwrap_or_else(|_| std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)), 9000));
 
-    let grpc_server = tonic::transport::Server::builder()
-        .tls_config(tonic::transport::server::ServerTlsConfig::new().identity(
-            tonic::transport::Identity::from_pem(&std::fs::read_to_string("cert.pem")?,
-            &std::fs::read_to_string("key.pem")?))
-        )
-        .unwrap()
-        .add_service(
-            UserSearchServer::new(UserSearchService { pg_pool: postgres::get_replica_pool_ref() })
-                .send_compressed(CompressionEncoding::Gzip)
-                .accept_compressed(CompressionEncoding::Gzip)
-        )
-        .serve(grpc_address);
+    // let grpc_server = tonic::transport::Server::builder()
+    //     .tls_config(tonic::transport::server::ServerTlsConfig::new().identity(
+    //         tonic::transport::Identity::from_pem(&std::fs::read_to_string("cert.pem")?,
+    //         &std::fs::read_to_string("key.pem")?))
+    //     )
+    //     .unwrap()
+    //     .add_service(
+    //         UserSearchServer::new(UserSearchService { pg_pool: postgres::get_replica_pool_ref() })
+    //             .send_compressed(CompressionEncoding::Gzip)
+    //             .accept_compressed(CompressionEncoding::Gzip)
+    //     )
+    //     .serve(grpc_address);
 
     // postgres::migrate_down(postgres::get_master_pool_ref()).await;
     postgres::migrate_up(postgres::get_master_pool_ref()).await;
@@ -656,6 +680,7 @@ async fn main() -> std::io::Result<()> {
     builder
         .set_private_key_file("key.pem", SslFiletype::PEM)
         .unwrap();
+
     builder.set_certificate_chain_file("cert.pem").unwrap();
 
     let http_address = std::env::var("HTTP_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".into());
@@ -738,7 +763,13 @@ async fn main() -> std::io::Result<()> {
     .bind_openssl(&http_address, builder)?
     .run();
 
-    let _ = future::try_join(tokio::spawn(http_server), tokio::spawn(grpc_server)).await?;
+    // WebSocket server
+    let ws_server = websocket::serve();
+
+    let _ = future::try_join(
+        tokio::spawn(http_server),
+        tokio::spawn(ws_server),
+    ).await?;
 
     Ok(())
 
