@@ -1,16 +1,23 @@
 use std::str::FromStr;
 
-use actix_web::{error, http, middleware, web, App, Error, HttpResponse, HttpServer};
+use actix_web::{error,
+    // http,
+    middleware, web, App, Error, HttpResponse, HttpServer
+};
 use deadpool_postgres::Pool as PostgresPool;
 use deadpool_redis::Pool as RedisPool;
 use futures::{future, StreamExt};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use postgres_friend_storage::PostgresFriendStorage;
 use serde::{Deserialize, Serialize};
-use user_search::user_search_server::{UserSearch, UserSearchServer};
+use user_search::user_search_server::{
+    UserSearch,
+    // UserSearchServer
+};
 use user_search::{UserSearchResponse, UserSearchRequest};
-use tonic::codec::CompressionEncoding;
+// use tonic::codec::CompressionEncoding;
 use actix_web_httpauth::extractors::bearer::{self, BearerAuth};
-use amqprs::channel::Channel;
+// use amqprs::channel::Channel;
 
 mod user_search;
 mod postgres;
@@ -21,6 +28,14 @@ mod post;
 mod redis;
 mod rabbitmq;
 mod websocket;
+mod session_storage;
+mod postgres_session_storage;
+mod tarantool_session_storage;
+mod friend_storage;
+mod postgres_friend_storage;
+mod tarantool_friend_storage;
+
+use tarantool_session_storage::{TarantoolSessionStorage, TarantoolClientConfig};
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
 
@@ -197,17 +212,12 @@ async fn login(pool: web::Data<&'static PostgresPool>, mut payload: web::Payload
         return Ok(HttpResponse::InternalServerError().json("unable to authenticate user"));
     }
 
-    let client = match pool.get().await {
-        Ok(client) => client,
-        Err(err) => {
-            log::debug!("unable to get postgres client: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to get postgres client"));
-        }
-    };
-
     match session::Session::create(
-        &**client,
-        &session::Session::new(&login_data.id, serde_json::json!({}))
+        &session::Session::new(
+            uuid::Uuid::new_v4().to_string(),
+            login_data.id,
+            serde_json::json!({}).to_string(),
+        )
     ).await {
         Ok(session_id) => {
             #[derive(Debug, Serialize)]
@@ -269,18 +279,10 @@ impl UserSearch for UserSearchService {
     }
 }
 
-async fn friend_set(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<String>, auth: BearerAuth, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
+async fn friend_set(path: web::Path<String>, auth: BearerAuth, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
     let friend_user_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
         Ok(val) => val,
         Err(_err) => return Ok(HttpResponse::InternalServerError().json("internal error")),
-    };
-
-    let pg_client = match pg_pool.get().await {
-        Ok(client) => client,
-        Err(err) => {
-            log::debug!("unable to get postgres client: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to get postgres client"));
-        }
     };
 
     let mut redis_connection = match redis_pool.get().await {
@@ -291,18 +293,12 @@ async fn friend_set(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<S
         }
     };
 
-    let user_id = session::Session::get_by_id(&**pg_client, auth.token()).await.expect("unauthorized")
+    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
         .get_user_id();
 
-    let friend = match friend::Friend::new(None, user_id, friend_user_id) {
-        Ok(friend) => friend,
-        Err(err) => {
-            log::debug!("unable to add friend: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to add friend"));
-        }
-    };
+    let friend = friend::Friend::new(None, user_id, friend_user_id);
 
-    let is_persistant = match friend.is_persistant(&**pg_client).await {
+    let is_persistant = match friend::Friend::is_persistant(&friend).await {
         Ok(res) => res,
         Err(err) => {
             log::debug!("unable to add friend: {:?}", err);
@@ -315,7 +311,7 @@ async fn friend_set(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<S
         return Ok(HttpResponse::InternalServerError().json("unable to add friend"));   
     }
     
-    match friend.add(&**pg_client, &mut redis_connection).await {
+    match friend::Friend::create(&friend, &mut redis_connection).await {
         Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
         Err(err) => {
             log::debug!("unable to add friend: {:?}", err);
@@ -324,7 +320,7 @@ async fn friend_set(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<S
     }
 }
 
-async fn friend_delete(pool: web::Data<&'static PostgresPool>, path: web::Path<String>, mut payload: web::Payload, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
+async fn friend_delete(path: web::Path<String>, mut payload: web::Payload, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
     let user_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
         Ok(val) => val,
         Err(_err) => return Ok(HttpResponse::InternalServerError().json("internal error")),
@@ -354,14 +350,6 @@ async fn friend_delete(pool: web::Data<&'static PostgresPool>, path: web::Path<S
         }
     };
 
-    let client = match pool.get().await {
-        Ok(client) => client,
-        Err(err) => {
-            log::debug!("unable to get postgres client: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to get postgres client"));
-        }
-    };
-
     let mut redis_connection = match redis_pool.get().await {
         Ok(client) => client,
         Err(err) => {
@@ -370,7 +358,7 @@ async fn friend_delete(pool: web::Data<&'static PostgresPool>, path: web::Path<S
         }
     };
 
-    let friend = match friend::Friend::get_by_user_id_and_friend_id(&**client, &user_id, &friend_user_id).await {
+    let friend = match friend::Friend::get_by_user_id_and_friend_id(&user_id, &friend_user_id).await {
         Ok(friend) => friend,
         Err(err) => {
             log::debug!("unable to delete friend: {:?}", err);
@@ -378,7 +366,7 @@ async fn friend_delete(pool: web::Data<&'static PostgresPool>, path: web::Path<S
         }
     };
     
-    match friend.delete(&**client, &mut redis_connection).await {
+    match friend::Friend::delete(&friend, &mut redis_connection).await {
         Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
         Err(err) => {
             log::debug!("unable to add friend: {:?}", err);
@@ -415,7 +403,7 @@ async fn post_feed(
         }
     };
 
-    let user_id = session::Session::get_by_id(&**pg_client, auth.token()).await.expect("unauthorized")
+    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
         .get_user_id();
 
     let feed = match post::Post::get_feed(&**pg_client, &mut redis_connection, &user_id, &search.offset, &search.limit).await {
@@ -433,7 +421,6 @@ async fn post_create(
     pg_pool: web::Data<&'static PostgresPool>,
     mut payload: web::Payload,
     auth: BearerAuth,
-    redis_pool: web::Data<&'static RedisPool>,
 ) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
@@ -465,15 +452,7 @@ async fn post_create(
         }
     };
 
-    let mut redis_connection = match redis_pool.get().await {
-        Ok(client) => client,
-        Err(err) => {
-            log::debug!("unable to get redis client: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to get redis client"));
-        }
-    };
-
-    let user_id = session::Session::get_by_id(&**pg_client, auth.token()).await.expect("unauthorized")
+    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
         .get_user_id();
 
     let post = match post::Post::new(None, &post_data.text, &user_id) {
@@ -484,7 +463,7 @@ async fn post_create(
         }
     };
 
-    match post::Post::create(&**pg_client, &mut redis_connection, &post).await {
+    match post::Post::create(&**pg_client, &post).await {
         Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
         Err(err) => {
             log::debug!("unable to create post: {:?}", err);
@@ -523,7 +502,6 @@ async fn post_update(
     path: web::Path<String>,
     mut payload: web::Payload,
     auth: BearerAuth,
-    redis_pool: web::Data<&'static RedisPool>,
 ) -> Result<HttpResponse, Error> {
     let post_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
         Ok(val) => val,
@@ -560,15 +538,7 @@ async fn post_update(
         }
     };
 
-    let mut redis_connection = match redis_pool.get().await {
-        Ok(client) => client,
-        Err(err) => {
-            log::debug!("unable to get redis client: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to get redis client"));
-        }
-    };
-
-    let user_id = session::Session::get_by_id(&**pg_client, auth.token()).await.expect("unauthorized")
+    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
         .get_user_id();
 
     let mut post = match post::Post::get_by_id(&**pg_client, &uuid::Uuid::from(post_id)).await {
@@ -586,7 +556,7 @@ async fn post_update(
 
     post.set_content(&post_data.text);
 
-    match post::Post::update(&**pg_client, &mut redis_connection, &post).await {
+    match post::Post::update(&**pg_client, &post).await {
         Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
         Err(err) => {
             log::debug!("unable to update post: {:?}", err);
@@ -599,7 +569,6 @@ async fn post_delete(
     pg_pool: web::Data<&'static PostgresPool>,
     path: web::Path<String>,
     auth: BearerAuth,
-    redis_pool: web::Data<&'static RedisPool>,
 ) -> Result<HttpResponse, Error> {
     let post_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
         Ok(val) => val,
@@ -614,15 +583,7 @@ async fn post_delete(
         }
     };
 
-    let mut redis_connection = match redis_pool.get().await {
-        Ok(client) => client,
-        Err(err) => {
-            log::debug!("unable to get redis client: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to get redis client"));
-        }
-    };
-
-    let user_id = session::Session::get_by_id(&**pg_client, auth.token()).await.expect("unauthorized")
+    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
         .get_user_id();
 
     let post = match post::Post::get_by_id(&**pg_client, &post_id).await {
@@ -638,7 +599,7 @@ async fn post_delete(
         return Ok(HttpResponse::InternalServerError().json("unable to delete post: user is not owner"));
     }
 
-    match post::Post::delete(&**pg_client, &mut redis_connection, &post).await {
+    match post::Post::delete(&**pg_client, &post).await {
         Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
         Err(err) => {
             log::debug!("unable to delete post: {:?}", err);
@@ -654,6 +615,17 @@ async fn main() -> std::io::Result<()> {
     redis::init_pool().await;
     rabbitmq::create_pub_sub().await;
     post::create_pub_sub().await;
+
+    session::init_storage(Box::new(TarantoolSessionStorage::new(TarantoolClientConfig::new(
+        std::env::var("TARANTOOL_AUTHORITY").unwrap_or(String::from("tarantool:3301")),
+        std::env::var("TARANTOOL_LOGIN").unwrap_or(String::from("guest")),
+        std::env::var("TARANTOOL_PASSWORD").unwrap_or(String::from("")),
+    )))).await;
+
+    friend::init_storage(Box::new(PostgresFriendStorage::new(
+        postgres::get_master_pool_ref(),
+        postgres::get_replica_pool_ref())),
+    ).await;
 
     // let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
     //     .unwrap_or_else(|_| "127.0.0.1:9000".into())
@@ -714,14 +686,12 @@ async fn main() -> std::io::Result<()> {
             )
             .service(
                 web::resource("/friend/set/{user_id}")
-                    .app_data(web::Data::new(postgres::get_master_pool_ref()))
                     .app_data(bearer::Config::default().realm("Restricted area").scope("friend"))
                     .app_data(web::Data::new(redis::get_pool_ref()))
                     .route(web::put().to(friend_set))
             )
             .service(
                 web::resource("/friend/delete/{user_id}")
-                    .app_data(web::Data::new(postgres::get_master_pool_ref()))
                     .app_data(bearer::Config::default().realm("Restricted area").scope("friend"))
                     .app_data(web::Data::new(redis::get_pool_ref()))
                     .route(web::put().to(friend_delete))
@@ -737,7 +707,6 @@ async fn main() -> std::io::Result<()> {
                 web::resource("/post/create")
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
                     .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
-                    .app_data(web::Data::new(redis::get_pool_ref()))
                     .route(web::post().to(post_create))
             )
             .service(
@@ -749,26 +718,21 @@ async fn main() -> std::io::Result<()> {
                 web::resource("/post/update/{id}")
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
                     .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
-                    .app_data(web::Data::new(redis::get_pool_ref()))
                     .route(web::put().to(post_update))
             )
             .service(
                 web::resource("/post/delete/{id}")
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
                     .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
-                    .app_data(web::Data::new(redis::get_pool_ref()))
                     .route(web::delete().to(post_delete))
             )
     })
     .bind_openssl(&http_address, builder)?
     .run();
 
-    // WebSocket server
-    let ws_server = websocket::serve();
-
     let _ = future::try_join(
         tokio::spawn(http_server),
-        tokio::spawn(ws_server),
+        tokio::spawn(websocket::serve()),
     ).await?;
 
     Ok(())

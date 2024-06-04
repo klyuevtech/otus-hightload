@@ -1,7 +1,22 @@
 use std::str::FromStr;
+use futures::io;
 use serde::{Deserialize, Serialize};
-use tokio_postgres::{Error, GenericClient, Row};
 use uuid::Uuid;
+use tokio::sync::OnceCell;
+
+use crate::session_storage::SessionStorage;
+
+static STORAGE: OnceCell<Box<dyn SessionStorage + Send + Sync>> = OnceCell::const_new();
+
+pub async fn init_storage(storage: Box<dyn SessionStorage + Send + Sync>) {
+    if !STORAGE.initialized() {
+        STORAGE.get_or_init(|| async {storage}).await;
+    }
+}
+
+fn get_storage() -> &'static Box<dyn SessionStorage + Send + Sync> {
+    STORAGE.get().unwrap()
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Session {
@@ -10,50 +25,32 @@ pub struct Session {
     data: serde_json::Value,
 }
 
-impl From<Row> for Session {
-    fn from(row: Row) -> Self {
-        let data: serde_json::Value = row.get(2);
-        Self {
-            id: row.get(0),
-            user_id: row.get(1),
-            data,
-        }
-    }
-}
-
 impl Session {
-    pub fn new(user_id: &String, data: serde_json::Value) -> Session {
+    pub fn new(id: String, user_id: String, data: String) -> Session {
         Session {
-            id: Uuid::new_v4(),
+            id: Uuid::parse_str(&id).unwrap(),
             user_id: Uuid::from_str(&user_id).unwrap(),
-            data
+            data: serde_json::Value::String(data),
         }
     }
 
-    pub async fn get_by_id<C: GenericClient,>(client: &C, id: &str) -> Result<Session, Error> {
-        let stmt = client.prepare("SELECT * FROM sessions WHERE id = $1").await?;
-
-        let row = client.query_one(&stmt, &[&Uuid::from_str(id).unwrap()]).await?;
-
-        Ok(Session::from(row))
-    }
-
-    pub async fn create<C: GenericClient>(client: &C, session: &Session) -> Result<Uuid, Error> {
-        let id = if "" == session.id.to_string() { Uuid::new_v4() } else { session.id };
-
-        let stmt = client.prepare(
-            "INSERT INTO sessions (id, user_id, data) VALUES ($1, $2, $3)"
-        ).await?;
-
-        client.execute(
-            &stmt,
-            &[&id, &session.user_id, &session.data]
-        ).await?;
-
-        Ok(id)
+    pub fn get_id(&self) -> Uuid {
+        self.id
     }
 
     pub fn get_user_id(&self) -> Uuid {
         self.user_id
+    }
+
+    pub fn get_data(&self) -> &serde_json::Value {
+        &self.data
+    }
+
+    pub async fn create(session: &Session) -> Result<Uuid, io::Error> {
+        get_storage().create(session).await
+    }
+
+    pub async fn get_by_id(id: &str) -> Result<Session, io::Error> {
+        get_storage().get_by_id(id).await
     }
 }

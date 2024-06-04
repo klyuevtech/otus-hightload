@@ -14,6 +14,14 @@ services:
       - '15672:15672'
     networks:
       - server-side
+  tarantool:
+    # image: tarantool/tarantool:latest
+    build: ./tarantool
+    networks:
+      - server-side
+    # environment:
+    #   - TARANTOOL_USER_NAME=tarantool_user
+    #   - TARANTOOL_USER_PASSWORD=mysecretpassword
   backend:
     build:
       context: ../backend
@@ -33,6 +41,7 @@ services:
       - PG_MASTER_POOL_MAX_SIZE=300
       - PG_REPLICA_POOL_MAX_SIZE=900
       - POSTS_FEED_CACHE_REDIS_URL=redis://redis:6379
+      - TARANTOOL_AUTHORITY=tarantool:3301
     networks:
       - client-side
       - server-side

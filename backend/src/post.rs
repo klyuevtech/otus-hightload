@@ -5,7 +5,6 @@ use amqprs::consumer::AsyncConsumer;
 use amqprs::{BasicProperties, Deliver};
 use deadpool_redis::Connection;
 use serde::{Deserialize, Serialize};
-use tokio::sync::OnceCell;
 use tokio_postgres::{Error as PostgresError, GenericClient, Row};
 use tonic::async_trait;
 use uuid::Uuid;
@@ -276,7 +275,7 @@ impl Post {
         Ok(row.try_into().unwrap())
     }
 
-    pub async fn create<C: GenericClient>(client: &C, redis_connection: &mut Connection, post: &Post) -> Result<Uuid, PostgresError> {
+    pub async fn create<C: GenericClient>(client: &C, post: &Post) -> Result<Uuid, PostgresError> {
         let stmt = client.prepare(
             "INSERT INTO posts (content, user_id) VALUES ($1, $2) RETURNING id"
         ).await?;
@@ -285,8 +284,6 @@ impl Post {
             &stmt,
             &[&post.content, &post.user_id]
         ).await?;
-
-        // Post::cache_invalidate_by_friend_user_id(client, redis_connection, &post.user_id).await.unwrap();
 
         let post_id = rows.iter().next().unwrap().get(0);
 
@@ -297,13 +294,12 @@ impl Post {
                 post_id,
                 post: post.clone(),
             }).unwrap().to_string().as_str(),
-            client,
         ).await;
 
         Ok(post_id)
     }
 
-    pub async fn update<C: GenericClient>(client: &C, redis_connection: &mut Connection, post: &Post) -> Result<bool, PostgresError> {
+    pub async fn update<C: GenericClient>(client: &C, post: &Post) -> Result<bool, PostgresError> {
         let stmt = client.prepare(
             "UPDATE posts SET content=$2, user_id=$3, time_updated=$4 WHERE id=$1"
         ).await?;
@@ -313,8 +309,6 @@ impl Post {
             &[&post.id, &post.content, &post.user_id, &chrono::Utc::now().naive_utc()]
         ).await?;
 
-        // Post::cache_invalidate_by_friend_user_id(client, redis_connection, &post.user_id).await.unwrap();
-
         self::publish_message(
             post.user_id.to_string().as_str(),
             serde_json::to_value(PostEventMessage {
@@ -322,13 +316,12 @@ impl Post {
                 post_id: post.id,
                 post: post.clone(),
             }).unwrap().to_string().as_str(),
-            client,
         ).await;
 
         Ok(0 < rows_count)
     }
 
-    pub async fn delete<C: GenericClient>(client: &C, redis_connection: &mut Connection, post: &Post) -> Result<Uuid, PostgresError> {
+    pub async fn delete<C: GenericClient>(client: &C, post: &Post) -> Result<Uuid, PostgresError> {
         let stmt = client.prepare(
             "DELETE FROM posts WHERE id=$1"
         ).await?;
@@ -338,8 +331,6 @@ impl Post {
             &[&post.id]
         ).await?;
 
-        // Post::cache_invalidate_by_friend_user_id(client, redis_connection, &post.user_id).await.unwrap();
-
         self::publish_message(
             post.user_id.to_string().as_str(),
             serde_json::to_value(PostEventMessage {
@@ -347,14 +338,13 @@ impl Post {
                 post_id: post.id,
                 post: post.clone(),
             }).unwrap().to_string().as_str(),
-            client,
         ).await;
 
         Ok(post.id)
     }
 
-    pub async fn cache_invalidate_by_friend_user_id(client: &impl GenericClient, redis_connection: &mut Connection, user_id: &Uuid) -> Result<(), PostgresError> {
-        let friends = friend::Friend::get_by_user_id(client, user_id).await.unwrap();
+    pub async fn cache_invalidate_by_friend_user_id(redis_connection: &mut Connection, user_id: &Uuid) -> Result<(), PostgresError> {
+        let friends: Vec<friend::Friend> = friend::Friend::get_by_user_id(user_id).await.unwrap();
         for friend in friends.iter() {
             let cache_hash_key = self::FEED_CACHE_KEY_PREFIX.to_string() + friend.get_friend_id().to_string().as_str();
             redis::del(
@@ -425,7 +415,7 @@ impl AsyncConsumer for FeedConsumer {
                 // let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
                 let post: Post = post_event_message.post;
                 log::debug!("Adding post to cache: {:?}", post);
-                let friends = friend::Friend::get_by_friend_id(&**pg_client, &post.user_id).await.unwrap();
+                let friends = friend::Friend::get_by_friend_id(&post.user_id).await.unwrap();
                 for friend in friends.iter() {
                     let cache_key = self::FEED_CACHE_KEY_PREFIX.to_string() + friend.get_user_id().to_string().as_str();
                     log::debug!("Updating cache key: '{}'", cache_key);
@@ -440,10 +430,9 @@ impl AsyncConsumer for FeedConsumer {
                 }
             },
             PostEvent::UPDATED => {
-                // let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
                 let post: Post = post_event_message.post;
                 log::debug!("Updating post to cache: {:?}", post);
-                let friends = friend::Friend::get_by_friend_id(&**pg_client, &post.user_id).await.unwrap();
+                let friends = friend::Friend::get_by_friend_id(&post.user_id).await.unwrap();
                 for friend in friends.iter() {
                     let cache_key = self::FEED_CACHE_KEY_PREFIX.to_string() + friend.get_user_id().to_string().as_str();
                     log::debug!("Deleting cache key: '{}'", cache_key);
@@ -451,10 +440,9 @@ impl AsyncConsumer for FeedConsumer {
                 }
             },
             PostEvent::DELETED => {
-                // let post = Post::get_by_id(&**pg_client, &post_event_message.post_id).await.unwrap();
                 let post: Post = post_event_message.post;
                 log::debug!("Removing post to cache: {:?}", post);
-                let friends = friend::Friend::get_by_friend_id(&**pg_client, &post.user_id).await.unwrap();
+                let friends = friend::Friend::get_by_friend_id(&post.user_id).await.unwrap();
                 for friend in friends.iter() {
                     let cache_key = self::FEED_CACHE_KEY_PREFIX.to_string() + friend.get_user_id().to_string().as_str();
                     log::debug!("Deleting cache key: '{}'", cache_key);
@@ -491,7 +479,7 @@ pub async fn create_pub_sub() {
     }
 }
 
-pub async fn publish_message<C: GenericClient>(entity_id: &str, message: &str, pg_client: &C) {
+pub async fn publish_message(entity_id: &str, message: &str) {
     {
         rabbitmq::publish_message(
             rabbitmq::get_channel_ref().await.lock().await.first().unwrap(),
@@ -503,7 +491,7 @@ pub async fn publish_message<C: GenericClient>(entity_id: &str, message: &str, p
 
     {
         let user_id = Uuid::parse_str(entity_id).unwrap();
-        let users = friend::Friend::get_by_friend_id(pg_client, &user_id).await.unwrap();
+        let users = friend::Friend::get_by_friend_id(&user_id).await.unwrap();
         for user in users.iter() {
             rabbitmq::publish_message(
                 rabbitmq::get_channel_ref().await.lock().await.first().unwrap(),
