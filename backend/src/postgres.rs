@@ -1,7 +1,11 @@
-use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, RecyclingMethod};
 use tokio_postgres::{config::LoadBalanceHosts, NoTls};
 use tokio_postgres_migration::Migration;
 use tokio::sync::OnceCell;
+use rusty_tarantool::tarantool::Client as TarantoolClient;
+use rand::seq::SliceRandom;
+
+use crate::friend;
 
 const SCRIPTS_UP: [(&str, &str); 10] = [(
     "0001_create-extension-uuid-ossp",
@@ -118,8 +122,41 @@ fn create_pool(max_size: usize, config: tokio_postgres::Config) -> Pool {
     )
 }
 
-pub async fn migrate_up(pool: &Pool) {
+pub async fn migrate_up(
+    pool: &Pool,
+    mut redis_connection: deadpool_redis::Connection,
+) {
     let mut client = pool.get().await.expect("couldn't get postgres client");
+
+// INSERT DUMMY FRIENDS DATA: BEGIN
+// let stmt = client.prepare("SELECT id FROM users LIMIT 1000000").await.unwrap();
+// let rows = client.query(&stmt, &[]).await.unwrap();
+// let ids = rows.iter().map(|row| row.get::<usize, uuid::Uuid>(0).to_string()).collect::<Vec<String>>();
+
+// for _ in 0..500000 {
+//     let user_id_str = ids.choose(&mut rand::thread_rng()).unwrap().as_str();
+//     let friend_id_str = ids.choose(&mut rand::thread_rng()).unwrap().as_str();
+// let user_id = uuid::Uuid::parse_str(user_id_str).unwrap();
+// let friend_id = uuid::Uuid::parse_str(friend_id_str).unwrap();
+// let stmt = client.prepare("INSERT INTO friends (user_id, friend_id) VALUES ($1, $2)").await.unwrap();
+// client.execute(&stmt, &[&user_id, &friend_id]).await.unwrap();
+
+//     let friend = friend::Friend::new(
+//         None,
+//         uuid::Uuid::parse_str(user_id_str).unwrap(),
+//         uuid::Uuid::parse_str(friend_id_str).unwrap(),
+//     );
+
+//     if let Ok(is_persistant) = friend::Friend::is_persistant(&friend).await {
+//         if is_persistant {
+//             continue;
+//         }
+//     };
+
+//     friend::Friend::create(&friend, &mut redis_connection).await.unwrap();
+// }
+// INSERT DUMMY FRIENDS DATA: END
+
     let migration = Migration::new("migrations".to_string());
     migration
         .up(&mut **client, &SCRIPTS_UP)

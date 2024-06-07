@@ -1,6 +1,8 @@
 use std::fmt;
 use std::error;
 use futures::io;
+use serde::Deserialize;
+use serde::Serialize;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 use deadpool_redis::Connection;
@@ -43,6 +45,7 @@ impl error::Error for FriendDataError {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Friend {
     id: Uuid,
     user_id: Uuid,
@@ -70,7 +73,7 @@ impl Friend {
         self.friend_id
     }
 
-    pub async fn get_by_id(id: &Uuid) -> Result<Friend, io::Error> {
+    pub async fn get_by_id(id: &Uuid) -> Result<Option<Friend>, io::Error> {
         get_storage().get_by_id(id).await
     }
 
@@ -82,7 +85,7 @@ impl Friend {
         get_storage().get_by_friend_id(friend_id).await
     }
 
-    pub async fn get_by_user_id_and_friend_id(user_id: &Uuid, friend_id: &Uuid) -> Result<Friend, io::Error> {
+    pub async fn get_by_user_id_and_friend_id(user_id: &Uuid, friend_id: &Uuid) -> Result<Option<Friend>, io::Error> {
         get_storage().get_by_user_id_and_friend_id(user_id, friend_id).await
     }
 

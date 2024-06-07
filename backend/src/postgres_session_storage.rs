@@ -8,8 +8,14 @@ use crate::{session::Session, session_storage::SessionStorage};
 
 impl From<Row> for Session {
     fn from(row: Row) -> Session {
+        let id: Uuid = row.get(0);
+        let user_id: Uuid = row.get(1);
         let data: serde_json::Value = row.get(2);
-        Session::new(row.get(0), row.get(1), data.to_string())
+        Session::new(
+            id.to_string(),
+            user_id.to_string(),
+            data.to_string()
+        )
     }
 }
 
@@ -29,14 +35,16 @@ impl PostgresSessionStorage {
 
 #[async_trait]
 impl SessionStorage for PostgresSessionStorage {
-    async fn get_by_id(&self, id: &str) -> Result<Session, io::Error> {
+    async fn get_by_id(&self, id: &str) -> Result<Option<Session>, io::Error> {
         let client = self.replica_pool.get().await.unwrap();
 
         let stmt = client.prepare("SELECT * FROM sessions WHERE id = $1").await.unwrap();
 
-        let row = client.query_one(&stmt, &[&Uuid::parse_str(id).unwrap()]).await.unwrap();
-
-        Ok(Session::from(row))
+        if let Ok(row) = client.query_one(&stmt, &[&Uuid::parse_str(id).unwrap()]).await {
+            Ok(Some(Session::from(row)))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn create(&self, session: &Session) -> Result<Uuid, io::Error> {

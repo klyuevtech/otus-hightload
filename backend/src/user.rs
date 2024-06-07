@@ -1,8 +1,9 @@
-use std::fmt;
+use std::{fmt, vec};
 use std::str::FromStr;
 use std::error::Error;
 use chrono::NaiveDate;
-use tokio_postgres::{Error as PostgresError, GenericClient, Row};
+use tokio_postgres::{Error as PostgresError, GenericClient, Row, RowStream};
+use futures_util::{pin_mut, TryStreamExt};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
@@ -122,6 +123,25 @@ impl User {
         let stmt = client.prepare("SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE id = $1").await?;
         let row = client.query_one(&stmt, &[&Uuid::from_str(&id).unwrap()]).await?;
         Ok(User::from(row))
+    }
+
+    pub async fn search_by_ids<C: GenericClient>(client: &C, ids: &Vec<String>) -> Result<Vec<User>, PostgresError> {
+        let arr_params = ids.iter().enumerate().map(|(i, _)| "$".to_owned() + (i+1).to_string().as_str());
+        let string_params = arr_params.reduce(|acc, x| acc + "," + &x).unwrap();
+        let str_params: &str = string_params.as_str();
+
+        let stmt = client.prepare(
+            ("SELECT id, first_name, second_name, birthdate, biography, city FROM users WHERE id::text IN (".to_owned() + &str_params + ")").as_str()
+        ).await?;
+
+        let rows_stream: RowStream = client.query_raw(&stmt, ids).await?.try_into().unwrap();
+
+        pin_mut!(rows_stream);
+        let mut users: Vec<User> = vec![];
+        while let Some(row) = rows_stream.try_next().await? {
+            users.push(User::from(row));
+        }
+        Ok(users)
     }
 
     pub async fn search_by_first_name_and_last_name<C: GenericClient>(

@@ -36,6 +36,7 @@ tokio-tungstenite = "*"
 futures-channel = "0.3.30"
 futures-util = "0.3.30"
 rusty_tarantool = "0.3.0"
+rand = "0.8.5"
 
 [dependencies.uuid]
 version = "1.7.0"

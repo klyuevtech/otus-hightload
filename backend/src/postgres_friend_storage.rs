@@ -28,14 +28,16 @@ impl PostgresFriendStorage {
 
 #[async_trait]
 impl FriendStorage for PostgresFriendStorage {
-    async fn get_by_id(&self, id: &Uuid) -> Result<Friend, io::Error> {
+    async fn get_by_id(&self, id: &Uuid) -> Result<Option<Friend>, io::Error> {
         let client = self.replica_pool.get().await.unwrap();
 
         let stmt = client.prepare("SELECT * FROM friends WHERE id = $1").await.unwrap();
 
-        let row = client.query_one(&stmt, &[&id]).await.unwrap();
-
-        Ok(Friend::from(row))
+        if let Ok(row) = client.query_one(&stmt, &[&id]).await {
+            Ok(Some(Friend::from(row)))
+        } else {
+            Ok(None)
+        }
     }
 
 
@@ -69,14 +71,16 @@ impl FriendStorage for PostgresFriendStorage {
         Ok(friends)
     }
 
-    async fn get_by_user_id_and_friend_id(&self, user_id: &Uuid, friend_id: &Uuid) -> Result<Friend, io::Error> {
+    async fn get_by_user_id_and_friend_id(&self, user_id: &Uuid, friend_id: &Uuid) -> Result<Option<Friend>, io::Error> {
         let client = self.replica_pool.get().await.unwrap();
 
         let stmt = client.prepare("SELECT * FROM friends WHERE user_id = $1 AND friend_id = $2").await.unwrap();
 
-        let row = client.query_one(&stmt, &[user_id, friend_id]).await.unwrap();
-
-        Ok(Friend::from(row))
+        if let Ok(row) = client.query_one(&stmt, &[user_id, friend_id]).await {
+            Ok(Some(Friend::from(row)))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn create(&self, friend: &Friend) -> Result<Uuid, io::Error> {

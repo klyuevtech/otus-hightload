@@ -50,7 +50,7 @@ impl Session {
         get_storage().create(session).await
     }
 
-    pub async fn get_by_id(id: &str) -> Result<Session, io::Error> {
+    pub async fn get_by_id(id: &str) -> Result<Option<Session>, io::Error> {
         get_storage().get_by_id(id).await
     }
 }

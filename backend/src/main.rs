@@ -10,6 +10,9 @@ use futures::{future, StreamExt};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use postgres_friend_storage::PostgresFriendStorage;
 use serde::{Deserialize, Serialize};
+use tarantool::{TarantoolClientConfig, TarantoolClientManager};
+use tarantool_friend_storage::TarantoolFriendStorage;
+use tarantool_session_storage::TarantoolSessionStorage;
 use user_search::user_search_server::{
     UserSearch,
     // UserSearchServer
@@ -21,6 +24,7 @@ use actix_web_httpauth::extractors::bearer::{self, BearerAuth};
 
 mod user_search;
 mod postgres;
+mod tarantool;
 mod user;
 mod session;
 mod friend;
@@ -34,8 +38,6 @@ mod tarantool_session_storage;
 mod friend_storage;
 mod postgres_friend_storage;
 mod tarantool_friend_storage;
-
-use tarantool_session_storage::{TarantoolSessionStorage, TarantoolClientConfig};
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
 
@@ -293,30 +295,66 @@ async fn friend_set(path: web::Path<String>, auth: BearerAuth, redis_pool: web::
         }
     };
 
-    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
-        .get_user_id();
+    if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+        let user_id = session.get_user_id();
+        let friend = friend::Friend::new(None, user_id, friend_user_id);
 
-    let friend = friend::Friend::new(None, user_id, friend_user_id);
-
-    let is_persistant = match friend::Friend::is_persistant(&friend).await {
-        Ok(res) => res,
-        Err(err) => {
-            log::debug!("unable to add friend: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to add friend"));
-        }
-    };
-
-    if is_persistant {
-        log::debug!("unable to add friend: record already exists");
-        return Ok(HttpResponse::InternalServerError().json("unable to add friend"));   
-    }
+        let is_persistant = match friend::Friend::is_persistant(&friend).await {
+            Ok(res) => res,
+            Err(err) => {
+                log::debug!("unable to add friend: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to add friend"));
+            }
+        };
     
-    match friend::Friend::create(&friend, &mut redis_connection).await {
-        Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
-        Err(err) => {
-            log::debug!("unable to add friend: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to add friend"));
+        if is_persistant {
+            log::debug!("unable to add friend: record already exists");
+            return Ok(HttpResponse::InternalServerError().json("unable to add friend"));   
         }
+        
+        match friend::Friend::create(&friend, &mut redis_connection).await {
+            Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
+            Err(err) => {
+                log::debug!("unable to add friend: {:?}", err);
+                Ok(HttpResponse::InternalServerError().json("unable to add friend"))
+            }
+        }
+    } else {
+        log::debug!("unable to add friend: unauthorized");
+        return Ok(HttpResponse::InternalServerError().json("unable to add friend"));
+    }
+}
+
+async fn friend_search(pg_pool: web::Data<&'static PostgresPool>, auth: BearerAuth) -> Result<HttpResponse, Error> {
+    if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+        let user_id = session.get_user_id();
+        let friends = match friend::Friend::get_by_user_id(&user_id).await {
+            Ok(friends) => friends,
+            Err(err) => {
+                log::debug!("unable to search friend: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to search friends"));
+            }
+        };
+
+        Ok(HttpResponse::Ok().json(friends))
+
+        // let pg_client = match pg_pool.get().await {
+        //     Ok(client) => client,
+        //     Err(err) => {
+        //         log::debug!("unable to get postgres client: {:?}", err);
+        //         return Ok(HttpResponse::InternalServerError().json("unable to get postgres client"));
+        //     }
+        // };
+    
+        // let users = user::User::search_by_ids(
+        //     &**pg_client,
+        //     &friends.into_iter().map(|friend| friend.get_friend_id().to_string()).collect(),
+        // ).await.unwrap();
+
+        // Ok(HttpResponse::Ok().json(users))
+    } else {
+        log::debug!("unable to search friend: unauthorized");
+        return Ok(HttpResponse::InternalServerError().json("unable to search friends"));
     }
 }
 
@@ -358,19 +396,26 @@ async fn friend_delete(path: web::Path<String>, mut payload: web::Payload, redis
         }
     };
 
-    let friend = match friend::Friend::get_by_user_id_and_friend_id(&user_id, &friend_user_id).await {
-        Ok(friend) => friend,
+    let friend_option = match friend::Friend::get_by_user_id_and_friend_id(&user_id, &friend_user_id).await {
+        Ok(friend_option) => friend_option,
         Err(err) => {
             log::debug!("unable to delete friend: {:?}", err);
             return Ok(HttpResponse::InternalServerError().json("unable to delete friend"));
         }
     };
-    
-    match friend::Friend::delete(&friend, &mut redis_connection).await {
-        Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
-        Err(err) => {
-            log::debug!("unable to add friend: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to delete friend"));
+
+    match friend_option {
+        Some(friend) => 
+            match friend::Friend::delete(&friend, &mut redis_connection).await {
+                Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
+                Err(err) => {
+                    log::debug!("unable to add friend: {:?}", err);
+                    Ok(HttpResponse::InternalServerError().json("unable to delete friend"))
+                }
+            },
+        None => {
+            log::debug!("unable to delete friend: record not found");
+            return Ok(HttpResponse::InternalServerError().json("unable to delete friend: record not found"));
         }
     }
 }
@@ -403,18 +448,21 @@ async fn post_feed(
         }
     };
 
-    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
-        .get_user_id();
-
-    let feed = match post::Post::get_feed(&**pg_client, &mut redis_connection, &user_id, &search.offset, &search.limit).await {
-        Ok(feed) => feed,
-        Err(err) => {
-            log::debug!("unable to get feed: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to get feed"));
-        }
-    };
-
-    Ok(HttpResponse::Ok().json(feed))
+    if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+        let user_id = session.get_user_id();
+        let feed = match post::Post::get_feed(&**pg_client, &mut redis_connection, &user_id, &search.offset, &search.limit).await {
+            Ok(feed) => feed,
+            Err(err) => {
+                log::debug!("unable to get feed: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to get feed"));
+            }
+        };
+    
+        Ok(HttpResponse::Ok().json(feed))
+    } else {
+        log::debug!("unable to get user id: unauthorized");
+        return Ok(HttpResponse::InternalServerError().json("unable to get user id"));
+    }
 }
 
 async fn post_create(
@@ -452,23 +500,26 @@ async fn post_create(
         }
     };
 
-    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
-        .get_user_id();
-
-    let post = match post::Post::new(None, &post_data.text, &user_id) {
-        Ok(post) => post,
-        Err(err) => {
-            log::debug!("unable to create post: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to create post"));
+    if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+        let user_id = session.get_user_id();
+        let post = match post::Post::new(None, &post_data.text, &user_id) {
+            Ok(post) => post,
+            Err(err) => {
+                log::debug!("unable to create post: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to create post"));
+            }
+        };
+    
+        match post::Post::create(&**pg_client, &post).await {
+            Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
+            Err(err) => {
+                log::debug!("unable to create post: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to create post"));
+            }
         }
-    };
-
-    match post::Post::create(&**pg_client, &post).await {
-        Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
-        Err(err) => {
-            log::debug!("unable to create post: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to create post"));
-        }
+    } else {
+        log::debug!("unable to create post: unauthorized");
+        return Ok(HttpResponse::InternalServerError().json("unable to create post"));
     }
 }
 
@@ -538,30 +589,33 @@ async fn post_update(
         }
     };
 
-    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
-        .get_user_id();
-
-    let mut post = match post::Post::get_by_id(&**pg_client, &uuid::Uuid::from(post_id)).await {
-        Ok(post) => post,
-        Err(err) => {
-            log::debug!("unable to update post: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to update post"));
+    if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+        let user_id = session.get_user_id();
+        let mut post = match post::Post::get_by_id(&**pg_client, &uuid::Uuid::from(post_id)).await {
+            Ok(post) => post,
+            Err(err) => {
+                log::debug!("unable to update post: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to update post"));
+            }
+        };
+    
+        if user_id != post.get_user_id() {
+            log::debug!("unable to update post: user is not owner");
+            return Ok(HttpResponse::InternalServerError().json("unable to update post: user is not owner"));
         }
-    };
-
-    if user_id != post.get_user_id() {
-        log::debug!("unable to update post: user is not owner");
-        return Ok(HttpResponse::InternalServerError().json("unable to update post: user is not owner"));
-    }
-
-    post.set_content(&post_data.text);
-
-    match post::Post::update(&**pg_client, &post).await {
-        Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
-        Err(err) => {
-            log::debug!("unable to update post: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to update post"));
+    
+        post.set_content(&post_data.text);
+    
+        match post::Post::update(&**pg_client, &post).await {
+            Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
+            Err(err) => {
+                log::debug!("unable to update post: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to update post"));
+            }
         }
+    } else {
+        log::debug!("unable to update post: unauthorized");
+        return Ok(HttpResponse::InternalServerError().json("unable to update post"));
     }
 }
 
@@ -583,28 +637,31 @@ async fn post_delete(
         }
     };
 
-    let user_id = session::Session::get_by_id(auth.token()).await.expect("unauthorized")
-        .get_user_id();
-
-    let post = match post::Post::get_by_id(&**pg_client, &post_id).await {
-        Ok(post) => post,
-        Err(err) => {
-            log::debug!("unable to get post: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to get post"));
+    if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+        let user_id = session.get_user_id();
+        let post = match post::Post::get_by_id(&**pg_client, &post_id).await {
+            Ok(post) => post,
+            Err(err) => {
+                log::debug!("unable to get post: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to get post"));
+            }
+        };
+    
+        if user_id != post.get_user_id() {
+            log::debug!("unable to delete post: user is not owner");
+            return Ok(HttpResponse::InternalServerError().json("unable to delete post: user is not owner"));
         }
-    };
-
-    if user_id != post.get_user_id() {
-        log::debug!("unable to delete post: user is not owner");
-        return Ok(HttpResponse::InternalServerError().json("unable to delete post: user is not owner"));
-    }
-
-    match post::Post::delete(&**pg_client, &post).await {
-        Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
-        Err(err) => {
-            log::debug!("unable to delete post: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to delete post"));
+    
+        match post::Post::delete(&**pg_client, &post).await {
+            Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
+            Err(err) => {
+                log::debug!("unable to delete post: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to delete post"));
+            }
         }
+    } else {
+        log::debug!("unable to delete post: unauthorized");
+        return Ok(HttpResponse::InternalServerError().json("unable to delete post"));
     }
 }
 
@@ -616,16 +673,21 @@ async fn main() -> std::io::Result<()> {
     rabbitmq::create_pub_sub().await;
     post::create_pub_sub().await;
 
-    session::init_storage(Box::new(TarantoolSessionStorage::new(TarantoolClientConfig::new(
-        std::env::var("TARANTOOL_AUTHORITY").unwrap_or(String::from("tarantool:3301")),
-        std::env::var("TARANTOOL_LOGIN").unwrap_or(String::from("guest")),
-        std::env::var("TARANTOOL_PASSWORD").unwrap_or(String::from("")),
-    )))).await;
+    session::init_storage(Box::new(
+        // postgres_session_storage::PostgresSessionStorage::new(
+        //     postgres::get_master_pool_ref(),
+        //     postgres::get_replica_pool_ref()
+        // )
+        TarantoolSessionStorage::new(tarantool::TarantoolClientManager::new().await)
+    )).await;
 
-    friend::init_storage(Box::new(PostgresFriendStorage::new(
-        postgres::get_master_pool_ref(),
-        postgres::get_replica_pool_ref())),
-    ).await;
+    friend::init_storage(Box::new(
+        // PostgresFriendStorage::new(
+        //     postgres::get_master_pool_ref(),
+        //     postgres::get_replica_pool_ref()
+        // )
+        TarantoolFriendStorage::new(tarantool::TarantoolClientManager::new().await)
+    )).await;
 
     // let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
     //     .unwrap_or_else(|_| "127.0.0.1:9000".into())
@@ -646,7 +708,10 @@ async fn main() -> std::io::Result<()> {
     //     .serve(grpc_address);
 
     // postgres::migrate_down(postgres::get_master_pool_ref()).await;
-    postgres::migrate_up(postgres::get_master_pool_ref()).await;
+    postgres::migrate_up(
+        postgres::get_master_pool_ref(),
+        redis::get_pool_ref().get().await.unwrap(),
+    ).await;
 
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
@@ -689,6 +754,12 @@ async fn main() -> std::io::Result<()> {
                     .app_data(bearer::Config::default().realm("Restricted area").scope("friend"))
                     .app_data(web::Data::new(redis::get_pool_ref()))
                     .route(web::put().to(friend_set))
+            )
+            .service(
+                web::resource("/friend/search")
+                    .app_data(bearer::Config::default().realm("Restricted area").scope("friend"))
+                    .app_data(web::Data::new(postgres::get_replica_pool_ref()))
+                    .route(web::get().to(friend_search))
             )
             .service(
                 web::resource("/friend/delete/{user_id}")
