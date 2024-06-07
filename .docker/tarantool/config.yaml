@@ -1,0 +1,41 @@
+app:
+  file: 'app.lua'
+
+credentials:
+  users:
+    replicator:
+      password: 'topsecret'
+      roles: [replication]
+    appuser:
+      password: 'topsecret'
+      roles: [super]
+
+iproto:
+  advertise:
+    peer:
+      login: replicator
+
+replication:
+  failover: election
+
+groups:
+  group001:
+    replicasets:
+      replicaset001:
+        snapshot:
+          dir: /var/lib/tarantool/sys_env/default/{{ instance_name }}/snapshots
+        wal:
+          dir: /var/lib/tarantool/sys_env/default/{{ instance_name }}/wals
+        instances:
+          instance001:
+            iproto:
+              listen:
+              - uri: 'tarantool:3301'
+          instance002:
+            iproto:
+              listen:
+              - uri: 'tarantool:3302'
+          instance003:
+            iproto:
+              listen:
+              - uri: 'tarantool:3303'

@@ -28,10 +28,11 @@ services:
       target: development
     restart: always
     environment:
+      - RUST_LOG=debug
+      # - RUST_BACKTRACE=1
       - HTTP_SERVER_ADDRESS=0.0.0.0:8000
       - GRPC_SERVER_ADDRESS=0.0.0.0:9000
       - WS_SERVER_ADDRESS=0.0.0.0:8087
-      - RUST_LOG=debug
       - PG_DBNAME=postgres
       - PG_AUTHORITY_MASTER=db:5432
       - PG_AUTHORITY_REPLICA=dbreplica1:5432,dbreplica2:5432
@@ -41,7 +42,9 @@ services:
       - PG_MASTER_POOL_MAX_SIZE=300
       - PG_REPLICA_POOL_MAX_SIZE=900
       - POSTS_FEED_CACHE_REDIS_URL=redis://redis:6379
-      - TARANTOOL_AUTHORITY=tarantool:3301
+      - TARANTOOL_AUTHORITY=tarantool:3301,tarantool:3302,tarantool:3303
+      - TARANTOOL_LOGIN=appuser
+      - TARANTOOL_PASSWORD=topsecret
     networks:
       - client-side
       - server-side
