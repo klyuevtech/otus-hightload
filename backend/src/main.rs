@@ -10,9 +10,11 @@ use futures::{future, StreamExt};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use postgres_friend_storage::PostgresFriendStorage;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tarantool::{TarantoolClientConfig, TarantoolClientManager};
 use tarantool_friend_storage::TarantoolFriendStorage;
 use tarantool_session_storage::TarantoolSessionStorage;
+use tonic::IntoRequest;
 use user_search::user_search_server::{
     UserSearch,
     // UserSearchServer
@@ -21,6 +23,7 @@ use user_search::{UserSearchResponse, UserSearchRequest};
 // use tonic::codec::CompressionEncoding;
 use actix_web_httpauth::extractors::bearer::{self, BearerAuth};
 // use amqprs::channel::Channel;
+use reqwest;
 
 mod user_search;
 mod postgres;
@@ -524,7 +527,7 @@ async fn post_create(
 }
 
 async fn post_get(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<String>) -> Result<HttpResponse, Error> {
-    let post_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
+    let post_id = match uuid::Uuid::parse_str(&path) {
         Ok(val) => val,
         Err(_err) => return Ok(HttpResponse::InternalServerError().json("internal error")),
     };
@@ -665,6 +668,92 @@ async fn post_delete(
     }
 }
 
+
+async fn dialog_send(
+    path: web::Path<String>,
+    mut payload: web::Payload,
+    auth: BearerAuth,
+) -> HttpResponse {
+    let message_sender_user_id: uuid::Uuid;
+    if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+        message_sender_user_id = session.get_user_id();
+    } else {
+        log::debug!("Unable to send dialog message: unauthorized");
+        return HttpResponse::InternalServerError().json("Unable to send dialog message: unauthorized");
+    }
+
+    let message_receiver_user_id = match uuid::Uuid::parse_str(&path) {
+        Ok(user_id2) => user_id2,
+        Err(_err) => return HttpResponse::InternalServerError().json("User id is not specified"),
+    };
+
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk.unwrap();
+        if (body.len() + chunk.len()) > MAX_SIZE {
+            return HttpResponse::BadRequest().json("Payload data overflow");
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    #[derive(Deserialize)]
+    struct DialogSendPayload {
+        text: String,
+    }
+
+    let payload_data = match serde_json::from_slice::<DialogSendPayload>(&body) {
+        Ok(payload_data) => payload_data,
+        Err(err) => {
+            log::debug!("Unable to parse json data: {:?}", err);
+            return HttpResponse::BadRequest().json("Unable to parse payload json data");
+        }
+    };
+
+    let dialog_service_url = std::env::var("DIALOGS_SERVICE_URL").unwrap_or_else(|_| String::from("localhost:8001"));
+    let dialogs_body = serde_json::json!({
+        "message_sender_user_id": message_sender_user_id,
+        "message_receiver_user_id": message_receiver_user_id,
+        "text": payload_data.text
+    });
+    let _ = reqwest::Client::new()
+        .post(dialog_service_url + "/send")
+        .json(&dialogs_body)
+        .send().await;
+
+    HttpResponse::Ok().json("ok")
+}
+
+async fn dialog_list(
+    path: web::Path<String>,
+    auth: BearerAuth,
+) -> HttpResponse {
+    let user_id1: uuid::Uuid = if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+        session.get_user_id()
+    } else {
+        log::debug!("Unable to send dialog message: unauthorized");
+        return HttpResponse::InternalServerError().json("Unable to send dialog message: unauthorized");
+    };
+
+    let user_id2 = match uuid::Uuid::parse_str(&path) {
+        Ok(user_id2) => user_id2,
+        Err(_err) => return HttpResponse::InternalServerError().json("User id is not specified"),
+    };
+
+    let dialog_service_url = std::env::var("DIALOGS_SERVICE_URL").unwrap_or_else(|_| String::from("localhost:8001"));
+    let dialogs_body = serde_json::json!({
+        "user_id1": user_id1,
+        "user_id2": user_id2,
+    });
+    let res = reqwest::Client::new()
+        .post(dialog_service_url + "/send")
+        .json(&dialogs_body)
+        .send().await.unwrap()
+        .text().await.unwrap();
+
+    HttpResponse::Ok().json(res)
+}
+
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -796,6 +885,16 @@ async fn main() -> std::io::Result<()> {
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
                     .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
                     .route(web::delete().to(post_delete))
+            )
+            .service(
+                web::resource("/dialog/{user_id}/send")
+                    .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
+                    .route(web::post().to(dialog_send))
+            )
+            .service(
+                web::resource("/dialog/{user_id}/list")
+                    .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
+                    .route(web::get().to(dialog_list))
             )
     })
     .bind_openssl(&http_address, builder)?

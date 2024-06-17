@@ -1,3 +1,4 @@
 /backend/target
+/dialogs/target
 /rust-postgres-*
 /people*

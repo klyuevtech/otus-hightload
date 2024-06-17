@@ -37,6 +37,7 @@ futures-channel = "0.3.30"
 futures-util = "0.3.30"
 rusty_tarantool = "0.3.0"
 rand = "0.8.5"
+reqwest = { version = "0.12.4", features = ["json"] }
 
 [dependencies.uuid]
 version = "1.7.0"
