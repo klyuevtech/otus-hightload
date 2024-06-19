@@ -1,8 +1,9 @@
 use std::str::FromStr;
 
+use actix_web::http::header::ContentType;
 use actix_web::{error,
     // http,
-    middleware, web, App, Error, HttpResponse, HttpServer
+    middleware, web, App, Error, HttpResponse, HttpRequest, HttpServer
 };
 use deadpool_postgres::Pool as PostgresPool;
 use deadpool_redis::Pool as RedisPool;
@@ -668,12 +669,20 @@ async fn post_delete(
     }
 }
 
+fn log_request(req: &HttpRequest) {
+    let unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let request_id = req.headers().get("x-request-id").unwrap_or_else(|| &unknown);
+    log::debug!("[Request ID {:?}] {:?}", request_id, req);
+}
 
 async fn dialog_send(
+    req: HttpRequest,
     path: web::Path<String>,
     mut payload: web::Payload,
     auth: BearerAuth,
 ) -> HttpResponse {
+    log_request(&req);
+
     let message_sender_user_id: uuid::Uuid;
     if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
         message_sender_user_id = session.get_user_id();
@@ -715,18 +724,37 @@ async fn dialog_send(
         "message_receiver_user_id": message_receiver_user_id,
         "text": payload_data.text
     });
-    let _ = reqwest::Client::new()
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let request_id_str = req.headers().get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+    let res = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build().unwrap()
         .post(dialog_service_url + "/send")
+        .header("x-request-id", request_id_str)
         .json(&dialogs_body)
-        .send().await;
+        .send().await.unwrap()
+        .text().await.unwrap();
 
-    HttpResponse::Ok().json("ok")
+    HttpResponse::Ok()
+        .content_type(ContentType::json())
+        .insert_header(("x-request-id", request_id_str))
+        .body(res)
+}
+
+#[derive(Deserialize)]
+struct DialogListRequestQuery {
+    offset: Option<usize>,
+    limit: Option<usize>,
 }
 
 async fn dialog_list(
+    req: HttpRequest,
     path: web::Path<String>,
+    search: web::Query<DialogListRequestQuery>,
     auth: BearerAuth,
 ) -> HttpResponse {
+    log_request(&req);
+
     let user_id1: uuid::Uuid = if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
         session.get_user_id()
     } else {
@@ -743,14 +771,25 @@ async fn dialog_list(
     let dialogs_body = serde_json::json!({
         "user_id1": user_id1,
         "user_id2": user_id2,
+        "offset": search.offset.unwrap_or(0),
+        "limit": search.limit.unwrap_or(50),
     });
-    let res = reqwest::Client::new()
-        .post(dialog_service_url + "/send")
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let request_id_str = req.headers().get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+
+    let res = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build().unwrap()
+        .post(dialog_service_url + "/list")
+        .header("x-request-id", request_id_str)
         .json(&dialogs_body)
         .send().await.unwrap()
         .text().await.unwrap();
 
-    HttpResponse::Ok().json(res)
+    HttpResponse::Ok()
+        .content_type(ContentType::json())
+        .insert_header(("x-request-id", request_id_str))
+        .body(res)
 }
 
 

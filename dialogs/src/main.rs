@@ -1,4 +1,4 @@
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
+use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use actix_web_httpauth::extractors::bearer::{
     self,
     // BearerAuth
@@ -12,6 +12,12 @@ mod postgres;
 mod dialog;
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
+
+fn log_request(req: HttpRequest) {
+    let unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let request_id = req.headers().get("x-request-id").unwrap_or_else(|| &unknown);
+    log::debug!("[Request ID {:?}] {:?}", request_id, req);
+}
 
 async fn dialog_send(
     pg_pool: web::Data<&'static PostgresPool>,
@@ -76,9 +82,12 @@ async fn dialog_send(
 }
 
 async fn dialog_list(
+    req: HttpRequest,
     pool: web::Data<&'static PostgresPool>,
     mut payload: web::Payload,
 ) -> HttpResponse {
+    log_request(req);
+
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk.unwrap();

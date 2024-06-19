@@ -45,6 +45,7 @@ services:
       - TARANTOOL_AUTHORITY=tarantool:3301,tarantool:3302,tarantool:3303
       - TARANTOOL_LOGIN=appuser
       - TARANTOOL_PASSWORD=topsecret
+      - DIALOGS_SERVICE_URL=https://dialogs:8000
     networks:
       - client-side
       - server-side
@@ -100,7 +101,9 @@ services:
 
 networks:
   client-side: {}
-  server-side: {}
+  server-side:
+    name: server-side
+
 volumes:
   backend-cache: {}
   db-data: {}

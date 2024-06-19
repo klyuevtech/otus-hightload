@@ -1,5 +1,7 @@
 networks:
   backend:
+  server-side:
+    name: server-side
 
 services:
   dialogs:
@@ -16,10 +18,10 @@ services:
       - PG_PASSWORD=postgres
       - PG_MASTER_POOL_MAX_SIZE=100
       - PG_REPLICA_POOL_MAX_SIZE=300
-    networks: [ backend ]
+    networks: [ backend, server-side ]
 
-    ports:
-      - 8001:8000
+    # ports:
+      # - 8001:8000
       # - 9000:9000
     volumes:
       - ./src:/code/src
