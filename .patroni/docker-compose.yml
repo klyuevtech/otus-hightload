@@ -6,54 +6,20 @@
 # The cluster could be started as:
 # $ docker-compose up -d
 # You can read more about it in the:
-# https://github.com/zalando/patroni/blob/master/docker/README.md
+# https://github.com/patroni/patroni/blob/master/docker/README.md
 version: "2"
 
 networks:
     demo:
 
-volumes:
-  backend-cache: {}
-
 services:
-    backend:
-        build:
-            context: ../backend
-            target: development
-        environment:
-            - HTTP_SERVER_ADDRESS=0.0.0.0:8000
-            - GRPC_SERVER_ADDRESS=0.0.0.0:9000
-            # - RUST_LOG=debug
-            - PG_DBNAME=postgres
-            - PG_AUTHORITY_MASTER=haproxy:5000
-            - PG_AUTHORITY_REPLICA=haproxy:5001
-            - PG_USER=postgres
-            - PG_PASSWORD=postgres
-            - PG_MASTER_POOL_MAX_SIZE=100
-            - PG_REPLICA_POOL_MAX_SIZE=300
-        networks:
-            - demo
-        ports:
-            - 8000:8000
-            - 9000:9000
-        volumes:
-            - ../backend/src:/code/src
-            - backend-cache:/code/target
-        depends_on:
-            - haproxy
-            - patroni1
-            - patroni2
-            - patroni3
-            - patroni4
-            - patroni5
-
     etcd1: &etcd
         image: ${PATRONI_TEST_IMAGE:-patroni}
         networks: [ demo ]
         environment:
             ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
             ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
-            ETCD_INITIAL_CLUSTER: etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380,etcd4=http://etcd4:2380,etcd5=http://etcd5:2380,etcd6=http://etcd6:2380
+            ETCD_INITIAL_CLUSTER: etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
             ETCD_INITIAL_CLUSTER_STATE: new
             ETCD_INITIAL_CLUSTER_TOKEN: tutorial
             ETCD_UNSUPPORTED_ARCH: arm64
@@ -73,24 +39,6 @@ services:
         hostname: etcd3
         command: etcd --name etcd3 --initial-advertise-peer-urls http://etcd3:2380
 
-    etcd4:
-        <<: *etcd
-        container_name: demo-etcd4
-        hostname: etcd4
-        command: etcd --name etcd4 --initial-advertise-peer-urls http://etcd4:2380
-
-    etcd5:
-        <<: *etcd
-        container_name: demo-etcd5
-        hostname: etcd5
-        command: etcd --name etcd5 --initial-advertise-peer-urls http://etcd5:2380
-
-    etcd6:
-        <<: *etcd
-        container_name: demo-etcd6
-        hostname: etcd6
-        command: etcd --name etcd6 --initial-advertise-peer-urls http://etcd6:2380
-
     haproxy:
         image: ${PATRONI_TEST_IMAGE:-patroni}
         networks: [ demo ]
@@ -98,12 +46,12 @@ services:
         hostname: haproxy
         container_name: demo-haproxy
         ports:
-            - "5001:5000"
-            - "5002:5001"
+            - "5000:5000"
+            - "5001:5001"
         command: haproxy
         environment: &haproxy_env
-            ETCDCTL_ENDPOINTS: http://etcd1:2379,http://etcd2:2379,http://etcd3:2379,http://etcd4:2379,http://etcd5:2379,http://etcd6:2379
-            PATRONI_ETCD3_HOSTS: "'etcd1:2379','etcd2:2379','etcd3:2379','etcd4:2379','etcd5:2379','etcd6:2379'"
+            ETCDCTL_ENDPOINTS: http://etcd1:2379,http://etcd2:2379,http://etcd3:2379
+            PATRONI_ETCD3_HOSTS: "'etcd1:2379','etcd2:2379','etcd3:2379'"
             PATRONI_SCOPE: demo
 
     patroni1:
@@ -135,33 +83,3 @@ services:
         environment:
             <<: *haproxy_env
             PATRONI_NAME: patroni3
-
-    patroni4:
-        image: ${PATRONI_TEST_IMAGE:-patroni}
-        networks: [ demo ]
-        env_file: docker/patroni.env
-        hostname: patroni4
-        container_name: demo-patroni4
-        environment:
-            <<: *haproxy_env
-            PATRONI_NAME: patroni4
-
-    patroni5:
-        image: ${PATRONI_TEST_IMAGE:-patroni}
-        networks: [ demo ]
-        env_file: docker/patroni.env
-        hostname: patroni5
-        container_name: demo-patroni5
-        environment:
-            <<: *haproxy_env
-            PATRONI_NAME: patroni5
-
-    patroni6:
-        image: ${PATRONI_TEST_IMAGE:-patroni}
-        networks: [ demo ]
-        env_file: docker/patroni.env
-        hostname: patroni6
-        container_name: demo-patroni6
-        environment:
-            <<: *haproxy_env
-            PATRONI_NAME: patroni6

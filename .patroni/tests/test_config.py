@@ -4,7 +4,7 @@ import unittest
 import io
 
 from copy import deepcopy
-from mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from patroni import global_config
 from patroni.config import ClusterConfig, Config, ConfigParseError
@@ -73,7 +73,7 @@ class TestConfig(unittest.TestCase):
             'PATRONI_RAFT_PARTNER_ADDRS': "'host1:1234','host2:1234'",
             'PATRONI_foo_HOSTS': '[host1,host2',  # Exception in parse_list
             'PATRONI_SUPERUSER_USERNAME': 'postgres',
-            'PATRONI_SUPERUSER_PASSWORD': 'zalando',
+            'PATRONI_SUPERUSER_PASSWORD': 'patroni',
             'PATRONI_REPLICATION_USERNAME': 'replicator',
             'PATRONI_REPLICATION_PASSWORD': 'rep-pass',
             'PATRONI_admin_PASSWORD': 'admin',

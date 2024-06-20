@@ -5,13 +5,13 @@ import yaml
 
 from . import MockConnect, MockCursor, MockConnectionInfo
 from copy import deepcopy
-from mock import MagicMock, Mock, PropertyMock, mock_open as _mock_open, patch
+from unittest.mock import MagicMock, Mock, PropertyMock, mock_open as _mock_open, patch
 
 from patroni.__main__ import main as _main
 from patroni.config import Config
 from patroni.config_generator import AbstractConfigGenerator, get_address, NO_VALUE_MSG
 from patroni.log import PatroniLogger
-from patroni.utils import patch_config
+from patroni.utils import patch_config, parse_bool
 
 from . import psycopg_connect
 
@@ -32,8 +32,7 @@ def mock_open(*args, **kwargs):
 @patch('subprocess.check_output', Mock(return_value=b"postgres (PostgreSQL) 16.2"))
 @patch('psutil.Process.exe', Mock(return_value='/bin/dir/from/running/postgres'))
 @patch('psutil.Process.__init__', Mock(return_value=None))
-@patch.object(AbstractConfigGenerator, '_HOSTNAME', HOSTNAME)
-@patch.object(AbstractConfigGenerator, '_IP', IP)
+@patch('patroni.config_generator.get_address', Mock(return_value=(HOSTNAME, IP)))
 class TestGenerateConfig(unittest.TestCase):
 
     def setUp(self):
@@ -56,7 +55,8 @@ class TestGenerateConfig(unittest.TestCase):
         dynamic_config['postgresql']['parameters'] = dict(dynamic_config['postgresql']['parameters'])
         del dynamic_config['standby_cluster']
         dynamic_config['postgresql']['parameters']['wal_keep_segments'] = 8
-        dynamic_config['postgresql']['use_pg_rewind'] = True
+        dynamic_config['postgresql']['use_pg_rewind'] = \
+            parse_bool(dynamic_config['postgresql']['parameters']['wal_log_hints']) is True
 
         self.config = {
             'scope': self.environ['PATRONI_SCOPE'],

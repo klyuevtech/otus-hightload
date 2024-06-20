@@ -4,11 +4,11 @@ import sys
 import unittest
 import yaml
 from io import StringIO
+from queue import Queue, Full
+from unittest.mock import Mock, patch
 
-from mock import Mock, patch
 from patroni.config import Config
 from patroni.log import PatroniLogger
-from queue import Queue, Full
 
 try:
     from pythonjsonlogger import jsonlogger
@@ -187,7 +187,7 @@ class TestPatroniLogger(unittest.TestCase):
             self.assertEqual(captured_log_level, 'WARNING')
             self.assertRegex(
                 captured_log_message,
-                fr'Expected log dateformat to be a string, but got "{type(config["dateformat"])}"'
+                r'Expected log dateformat to be a string, but got "int"'
             )
 
     def test_invalid_plain_format(self):

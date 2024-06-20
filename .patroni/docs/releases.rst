@@ -3,8 +3,37 @@
 Release notes
 =============
 
+Version 3.3.1
+-------------
+
+Released 2024-06-17
+
+**Stability improvements**
+
+- Compatibility with Python 3.12 (Alexander Kukushkin)
+
+  Handle a new attribute added to ``logging.LogRecord``.
+
+
+**Bugfixes**
+
+- Fix infinite recursion in ``replicatefrom`` tags handling (Alexander Kukushkin)
+
+  As a part of this fix, also improve ``is_physical_slot()`` check and adjust documentation.
+
+- Fix wrong role reporting in standby clusters (Alexander Kukushkin)
+
+  ``synchronous_standby_names`` and synchronous replication only work on a real primary node and in the case of cascading replication are simply ignored by Postgres. Before this fix, ``patronictl list`` and ``GET /cluster`` were falsely reporting some nodes as synchronous.
+
+- Fix availability of the ``allow_in_place_tablespaces`` GUC (Polina Bungina)
+
+  ``allow_in_place_tablespaces`` was not only added to PostgreSQL 15 but also backpatched to PostgreSQL 10-14.
+
+
 Version 3.3.0
 -------------
+
+Released 2024-04-04
 
 .. warning::
    All older Partoni versions are not compatible with ``ydiff>=1.3``.
@@ -76,6 +105,8 @@ Version 3.3.0
 Version 3.2.2
 -------------
 
+Released 2024-01-17
+
 **Bugfixes**
 
 - Don't let replica restore initialize key when DCS was wiped (Alexander Kukushkin)
@@ -126,6 +157,8 @@ Version 3.2.2
 Version 3.2.1
 -------------
 
+Released 2023-11-30
+
 **Bugfixes**
 
 - Limit accepted values for ``--format`` argument in ``patronictl`` (Alexander Kukushkin)
@@ -163,6 +196,8 @@ Version 3.2.1
 
 Version 3.2.0
 -------------
+
+Released 2023-10-25
 
 **Deprecation notice**
 
@@ -236,6 +271,8 @@ Version 3.2.0
 Version 3.1.2
 -------------
 
+Released 2023-09-26
+
 **Bugfixes**
 
 - Fixed bug with ``wal_keep_size`` checks (Alexander Kukushkin)
@@ -257,6 +294,8 @@ Version 3.1.2
 
 Version 3.1.1
 -------------
+
+Released 2023-09-20
 
 **Bugfixes**
 
@@ -315,6 +354,8 @@ Version 3.1.1
 
 Version 3.1.0
 -------------
+
+Released 2023-08-03
 
 **Breaking changes**
 
@@ -394,6 +435,8 @@ Version 3.1.0
 Version 3.0.4
 -------------
 
+Released 2023-07-13
+
 **New features**
 
 - Make the replication status of standby nodes visible (Alexander Kukushkin)
@@ -437,6 +480,8 @@ Version 3.0.4
 
 Version 3.0.3
 -------------
+
+Released 2023-06-22
 
 **New features**
 
@@ -491,6 +536,8 @@ Version 3.0.3
 
 Version 3.0.2
 -------------
+
+Released 2023-03-24
 
 .. warning::
     Version 3.0.2 dropped support of Python older than 3.6.
@@ -548,6 +595,8 @@ Version 3.0.2
 Version 3.0.1
 -------------
 
+Released 2023-02-16
+
 **Bugfixes**
 
 - Pass proper role name to an ``on_role_change`` callback script'. (Alexander Kukushkin, Polina Bungina)
@@ -557,6 +606,8 @@ Version 3.0.1
 
 Version 3.0.0
 -------------
+
+Released 2023-01-30
 
 This version adds integration with `Citus <https://www.citusdata.com>`__ and makes it possible to survive temporary DCS outages without demoting primary.
 
@@ -608,6 +659,8 @@ This version adds integration with `Citus <https://www.citusdata.com>`__ and mak
 Version 2.1.7
 -------------
 
+Released 2023-01-04
+
 **Bugfixes**
 
 - Fixed little incompatibilities with legacy python modules (Alexander Kukushkin)
@@ -617,6 +670,8 @@ Version 2.1.7
 
 Version 2.1.6
 -------------
+
+Released 2022-12-30
 
 **Improvements**
 
@@ -672,6 +727,8 @@ Version 2.1.6
 
 Version 2.1.5
 -------------
+
+Released 2022-11-28
 
 This version enhances compatibility with PostgreSQL 15 and declares Etcd v3 support as production ready. The Patroni on Raft remains in Beta.
 
@@ -771,6 +828,8 @@ This version enhances compatibility with PostgreSQL 15 and declares Etcd v3 supp
 Version 2.1.4
 -------------
 
+Released 2022-06-01
+
 **New features**
 
 - Improve ``pg_rewind`` behavior on typical Debian/Ubuntu systems (Gunnar "Nick" Bluth)
@@ -843,6 +902,8 @@ Version 2.1.4
 Version 2.1.3
 -------------
 
+Released 2022-02-18
+
 **New features**
 
 - Added support for encrypted TLS keys for ``patronictl`` (Alexander Kukushkin)
@@ -908,6 +969,8 @@ Version 2.1.3
 
 Version 2.1.2
 -------------
+
+Released 2021-12-03
 
 **New features**
 
@@ -1013,6 +1076,8 @@ Version 2.1.2
 Version 2.1.1
 -------------
 
+Released 2021-08-19
+
 **New features**
 
 - Support for ETCD SRV name suffix (David Pavlicek)
@@ -1048,6 +1113,8 @@ Version 2.1.1
 
 Version 2.1.0
 -------------
+
+Released 2021-07-06
 
 This version adds compatibility with PostgreSQL v14, makes logical replication slots to survive failover/switchover, implements support of allowlist for REST API, and also reducing the number of logs to one line per heart-beat.
 
@@ -1140,6 +1207,8 @@ This version adds compatibility with PostgreSQL v14, makes logical replication s
 
 Version 2.0.2
 -------------
+
+Released 2021-02-22
 
 **New features**
 
@@ -1237,6 +1306,8 @@ Version 2.0.2
 Version 2.0.1
 -------------
 
+Released 2020-10-01
+
 **New features**
 
 - Use ``more`` as pager in ``patronictl edit-config`` if ``less`` is not available (Pavel Golub)
@@ -1284,6 +1355,8 @@ Version 2.0.1
 
 Version 2.0.0
 -------------
+
+Released 2020-09-02
 
 This version enhances compatibility with PostgreSQL 13, adds support of multiple synchronous standbys, has significant improvements in handling of ``pg_rewind``, adds support of Etcd v3 and Patroni on pure RAFT (without Etcd, Consul, or Zookeeper), and makes it possible to optionally call the ``pre_promote`` (fencing) script.
 
@@ -1507,6 +1580,8 @@ This version enhances compatibility with PostgreSQL 13, adds support of multiple
 Version 1.6.5
 -------------
 
+Released 2020-08-23
+
 **New features**
 
 - Master stop timeout (Krishna Sarabu)
@@ -1623,6 +1698,8 @@ Version 1.6.5
 Version 1.6.4
 -------------
 
+Released 2020-01-27
+
 **New features**
 
 - Implemented ``--wait`` option for ``patronictl reinit`` (Igor Yanchenko)
@@ -1685,11 +1762,13 @@ Version 1.6.4
 Version 1.6.3
 -------------
 
+Released 2019-12-05
+
 **Bugfixes**
 
 - Don't expose password when running ``pg_rewind`` (Alexander Kukushkin)
 
-  Bug was introduced in the `#1301 <https://github.com/zalando/patroni/pull/1301>`__
+  Bug was introduced in the `#1301 <https://github.com/patroni/patroni/pull/1301>`__
 
 - Apply connection parameters specified in the ``postgresql.authentication`` to ``pg_basebackup`` and custom replica creation methods (Alexander Kukushkin)
 
@@ -1698,6 +1777,8 @@ Version 1.6.3
 
 Version 1.6.2
 -------------
+
+Released 2019-12-05
 
 **New features**
 
@@ -1753,6 +1834,8 @@ Version 1.6.2
 
 Version 1.6.1
 -------------
+
+Released 2019-11-15
 
 **New features**
 
@@ -1883,6 +1966,8 @@ Version 1.6.1
 Version 1.6.0
 -------------
 
+Released 2019-08-05
+
 This version adds compatibility with PostgreSQL 12, makes is possible to run pg_rewind without superuser on PostgreSQL 11 and newer, and enables IPv6 support.
 
 
@@ -1995,6 +2080,8 @@ This version adds compatibility with PostgreSQL 12, makes is possible to run pg_
 Version 1.5.6
 -------------
 
+Released 2019-08-03
+
 **New features**
 
 - Support work with etcd cluster via set of proxies (Alexander Kukushkin)
@@ -2038,6 +2125,8 @@ Version 1.5.6
 Version 1.5.5
 -------------
 
+Released 2019-02-15
+
 This version introduces the possibility of automatic reinit of the former master, improves patronictl list output and fixes a number of bugs.
 
 **New features**
@@ -2075,6 +2164,8 @@ This version introduces the possibility of automatic reinit of the former master
 
 Version 1.5.4
 -------------
+
+Released 2019-01-15
 
 This version implements flexible logging and fixes a number of bugs.
 
@@ -2135,6 +2226,8 @@ This version implements flexible logging and fixes a number of bugs.
 Version 1.5.3
 -------------
 
+Released 2018-12-03
+
 Compatibility and bugfix release.
 
 - Improve stability when running with python3 against zookeeper (Alexander Kukushkin)
@@ -2152,6 +2245,8 @@ Compatibility and bugfix release.
 Version 1.5.2
 -------------
 
+Released 2018-11-26
+
 Compatibility and bugfix release.
 
 - Compatibility with kazoo-2.6.0 (Alexander Kukushkin)
@@ -2164,6 +2259,8 @@ Compatibility and bugfix release.
 
 Version 1.5.1
 -------------
+
+Released 2018-11-01
 
 This version implements support of permanent replication slots, adds support of pgBackRest and fixes number of bugs.
 
@@ -2181,14 +2278,16 @@ This version implements support of permanent replication slots, adds support of 
 
 - A few bugfixes in the "standby cluster" workflow (Alexander Kukushkin)
 
-  Please see https://github.com/zalando/patroni/pull/823 for more details.
+  Please see https://github.com/patroni/patroni/pull/823 for more details.
 
 - Fix REST API health check when cluster management is paused and DCS is not accessible (Alexander Kukushkin)
 
-  Regression was introduced in https://github.com/zalando/patroni/commit/90cf930036a9d5249265af15d2b787ec7517cf57
+  Regression was introduced in https://github.com/patroni/patroni/commit/90cf930036a9d5249265af15d2b787ec7517cf57
 
 Version 1.5.0
 -------------
+
+Released 2018-09-20
 
 This version enables Patroni HA cluster to operate in a standby mode, introduces experimental support for running on Windows, and provides a new configuration parameter to register PostgreSQL service in Consul.
 
@@ -2238,6 +2337,8 @@ This version enables Patroni HA cluster to operate in a standby mode, introduces
 Version 1.4.6
 -------------
 
+Released 2018-08-14
+
 **Bug fixes and stability improvements**
 
 This release fixes a critical issue with Patroni API /master endpoint returning 200 for the non-master node. This is a
@@ -2254,6 +2355,8 @@ reporting issue, no actual split-brain, but under certain circumstances clients 
 
 Version 1.4.5
 -------------
+
+Released 2018-08-03
 
 **New features**
 
@@ -2319,6 +2422,8 @@ Version 1.4.5
 Version 1.4.4
 -------------
 
+Released 2018-05-22
+
 **Stability improvements**
 
 - Fix race condition in poll_failover_result (Alexander Kukushkin)
@@ -2381,6 +2486,8 @@ Version 1.4.4
 Version 1.4.3
 -------------
 
+Released 2018-03-05
+
 **Improvements in logging**
 
 - Make log level configurable from environment variables (Andy Newton, Keyvan Hedayati)
@@ -2401,11 +2508,13 @@ Version 1.4.3
 
 - Single user mode was waiting for user input and never finish (Alexander Kukushkin)
 
-  Regression was introduced in https://github.com/zalando/patroni/pull/576
+  Regression was introduced in https://github.com/patroni/patroni/pull/576
 
 
 Version 1.4.2
 -------------
+
+Released 2018-01-30
 
 **Improvements in patronictl**
 
@@ -2450,6 +2559,8 @@ Version 1.4.2
 Version 1.4.1
 -------------
 
+Released 2018-01-17
+
 **Fixes in patronictl**
 
 - Don't show current leader in suggested list of members to failover to. (Alexander Kukushkin)
@@ -2463,6 +2574,8 @@ Version 1.4.1
 
 Version 1.4
 -----------
+
+Released 2018-01-10
 
 This version adds support for using Kubernetes as a DCS, allowing to run Patroni as a cloud-native agent in Kubernetes without any additional deployments of Etcd, Zookeeper or Consul.
 
@@ -2546,6 +2659,8 @@ In addition to using Endpoints, Patroni supports ConfigMaps. You can find more i
 Version 1.3.6
 -------------
 
+Released 2017-11-10
+
 **Stability improvements**
 
 - Verify process start time when checking if postgres is running. (Ants Aasma)
@@ -2587,6 +2702,8 @@ Version 1.3.6
 Version 1.3.5
 -------------
 
+Released 2017-10-12
+
 **Bugfix**
 
 - Set role to 'uninitialized' if data directory was removed (Alexander Kukushkin)
@@ -2617,6 +2734,8 @@ Version 1.3.5
 
 Version 1.3.4
 -------------
+
+Released 2017-09-08
 
 **Different Consul improvements**
 
@@ -2656,6 +2775,8 @@ Version 1.3.4
 Version 1.3.3
 -------------
 
+Released 2017-08-04
+
 **Bugfixes**
 
 - synchronous replication was disabled shortly after promotion even when synchronous_mode_strict was turned on (Alexander Kukushkin)
@@ -2666,6 +2787,8 @@ Version 1.3.3
 Version 1.3.2
 -------------
 
+Released 2017-07-31
+
 **Bugfix**
 
 - patronictl edit-config didn't work with ZooKeeper (Alexander Kukushkin)
@@ -2674,6 +2797,8 @@ Version 1.3.2
 Version 1.3.1
 -------------
 
+Released 2017-07-28
+
 **Bugfix**
 
 - failover via API was broken due to change in ``_MemberStatus`` (Alexander Kukushkin)
@@ -2681,6 +2806,8 @@ Version 1.3.1
 
 Version 1.3
 -----------
+
+Released 2017-07-27
 
 Version 1.3 adds custom bootstrap possibility, significantly improves support for pg_rewind, enhances the
 synchronous mode support, adds configuration editing to patronictl and implements watchdog support on Linux.
@@ -2810,6 +2937,8 @@ at the end.
 Version 1.2
 -----------
 
+Released 2016-12-13
+
 This version introduces significant improvements over the handling of synchronous replication, makes the startup process and failover more reliable, adds PostgreSQL 9.6 support and fixes plenty of bugs.
 In addition, the documentation, including these release notes, has been moved to https://patroni.readthedocs.io.
 
@@ -2889,7 +3018,7 @@ In addition, the documentation, including these release notes, has been moved to
 
 **Documentation improvements**
 
-- Add a Patroni main `loop workflow diagram <https://raw.githubusercontent.com/zalando/patroni/master/docs/ha_loop_diagram.png>`__. (Alejandro Martínez, Alexander Kukushkin)
+- Add a Patroni main `loop workflow diagram <https://raw.githubusercontent.com/patroni/patroni/master/docs/ha_loop_diagram.png>`__. (Alejandro Martínez, Alexander Kukushkin)
 
 - Improve README, adding the Helm chart and links to release notes. (Lauri Apple)
 
@@ -2904,6 +3033,8 @@ In addition, the documentation, including these release notes, has been moved to
 
 Version 1.1
 -----------
+
+Released 2016-09-07
 
 This release improves management of Patroni cluster by bring in pause mode, improves maintenance with scheduled and conditional restarts, makes Patroni interaction with Etcd or Zookeeper more resilient and greatly enhances patronictl.
 
@@ -3002,6 +3133,8 @@ Previously, there was no reliable way to query Patroni about PostgreSQL instance
 Version 1.0
 -----------
 
+Released 2016-07-05
+
 This release introduces the global dynamic configuration that allows dynamic changes of the PostgreSQL and Patroni configuration parameters for the entire HA cluster. It also delivers numerous bugfixes.
 
 **Upgrade notice**
@@ -3093,6 +3226,8 @@ When upgrading from v0.90 or below, always upgrade all replicas before the maste
 Version 0.90
 ------------
 
+Released 2016-04-27
+
 This releases adds support for Consul, includes a new *noloadbalance* tag, changes the behavior of the *clonefrom* tag, improves *pg_rewind* handling and improves *patronictl* control program.
 
 **Consul support**
@@ -3155,6 +3290,8 @@ This releases adds support for Consul, includes a new *noloadbalance* tag, chang
 Version 0.80
 ------------
 
+Released 2016-03-14
+
 This release adds support for *cascading replication* and simplifies Patroni management by providing *scheduled failovers*. One may use older versions of Patroni (in particular, 0.78) combined with this one in order to migrate to the new release. Note that the scheduled failover and cascading replication related features will only work with Patroni 0.80 and above.
 
 **Cascading replication**
@@ -3195,4 +3332,4 @@ This release adds support for *cascading replication* and simplifies Patroni man
 
   The tests can be launched manually using the *behave* command. They are also launched automatically for pull requests and after commits.
 
-  Release notes for some older versions can be found on `project's github page <https://github.com/zalando/patroni/releases>`__.
+  Release notes for some older versions can be found on `project's github page <https://github.com/patroni/patroni/releases>`__.

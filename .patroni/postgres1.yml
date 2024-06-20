@@ -55,8 +55,6 @@ bootstrap:
     loop_wait: 10
     retry_timeout: 10
     maximum_lag_on_failover: 1048576
-    synchronous_mode: true
-    synchronous_node_count: 5
     postgresql:
       use_pg_rewind: true
       pg_hba:
@@ -68,8 +66,6 @@ bootstrap:
       #  - hostssl all all 0.0.0.0/0 md5
 #      use_slots: true
       parameters:
-        synchronous_commit: "on"
-        synchronous_standby_names: "*"
 #        wal_level: hot_standby
 #        hot_standby: "on"
 #        max_connections: 100
@@ -109,7 +105,7 @@ postgresql:
       password: rep-pass
     superuser:
       username: postgres
-      password: zalando
+      password: patroni
     rewind:  # Has no effect on postgres 10 and lower
       username: rewind_user
       password: rewind_password

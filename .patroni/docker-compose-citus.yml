@@ -8,7 +8,7 @@
 # The cluster could be started as:
 # $ docker-compose -f docker-compose-citus.yml up -d
 # You can read more about it in the:
-# https://github.com/zalando/patroni/blob/master/docker/README.md#citus-cluster
+# https://github.com/patroni/patroni/blob/master/docker/README.md#citus-cluster
 version: "2"
 
 networks:
@@ -48,8 +48,8 @@ services:
         hostname: haproxy
         container_name: demo-haproxy
         ports:
-            - "5000:5000"  # Access to the coorinator primary
-            - "5001:5001"  # Load-balancing across workers primaries
+            - "5001:5000"  # Access to the coorinator primary
+            - "5002:5001"  # Load-balancing across workers primaries
         command: haproxy
         environment: &haproxy_env
             ETCDCTL_ENDPOINTS: http://etcd1:2379,http://etcd2:2379,http://etcd3:2379
