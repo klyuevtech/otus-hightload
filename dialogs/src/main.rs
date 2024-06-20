@@ -13,13 +13,14 @@ mod dialog;
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
 
-fn log_request(req: HttpRequest) {
+fn log_request(req: &HttpRequest) {
     let unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
     let request_id = req.headers().get("x-request-id").unwrap_or_else(|| &unknown);
     log::debug!("[Request ID {:?}] {:?}", request_id, req);
 }
 
 async fn dialog_send(
+    req: HttpRequest,
     pg_pool: web::Data<&'static PostgresPool>,
     mut payload: web::Payload,
 ) -> HttpResponse {
@@ -78,7 +79,13 @@ async fn dialog_send(
         }
     }
 
-    HttpResponse::Ok().json("ok")
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let x_request_id = req.headers().get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+
+    HttpResponse::Ok()
+        .insert_header(("x-request-id", x_request_id))
+        .insert_header(("x-server-instance", std::env::var("SELF_HOST_NAME").unwrap_or(String::from("unknown"))))
+        .json("ok")
 }
 
 async fn dialog_list(
@@ -86,7 +93,7 @@ async fn dialog_list(
     pool: web::Data<&'static PostgresPool>,
     mut payload: web::Payload,
 ) -> HttpResponse {
-    log_request(req);
+    log_request(&req);
 
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
@@ -141,7 +148,20 @@ async fn dialog_list(
         }
     };
     log::debug!("List messages with params: user_id1='{:?}' user_id2='{:?}' offset={:?} limit={:?}", user_id1, user_id2, offset, limit);
-    HttpResponse::Ok().json(serde_json::json!(dialog::Dialog::list_messages(&**client, user_id1, user_id2, offset, limit).await.unwrap()))
+
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let x_request_id = req.headers().get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+
+    HttpResponse::Ok()
+        .insert_header(("x-request-id", x_request_id))
+        .insert_header(("x-server-instance", std::env::var("SELF_HOST_NAME").unwrap_or(String::from("unknown"))))
+        .json(
+            serde_json::json!(
+                dialog::Dialog::list_messages(&**client, user_id1, user_id2, offset, limit)
+                    .await
+                    .unwrap_or_else(|e| {log::debug!("Unable to get messages: {:?}", e);return Vec::new();})
+            )
+        )
 }
 
 #[actix_web::main]

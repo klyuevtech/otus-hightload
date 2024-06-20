@@ -3,19 +3,19 @@ use tokio_postgres::{config::LoadBalanceHosts, NoTls};
 use tokio_postgres_migration::Migration;
 use tokio::sync::OnceCell;
 
-const SCRIPTS_UP: [(&str, &str); 5] = [(
+const SCRIPTS_UP: [(&str, &str); 3] = [(
     "0001_create_extension-uuid-ossp_up",
     include_str!("../migrations/0001_create_extension-uuid-ossp_up.sql"),
 ),(
-    "0001_create_extension_citus_up",
-    include_str!("../migrations/0001_create_extension_citus_up.sql"),
-),(
+//     "0001_create_extension_citus_up",
+//     include_str!("../migrations/0001_create_extension_citus_up.sql"),
+// ),(
     "0001_create_dialog-messages_up",
     include_str!("../migrations/0001_create_dialog-messages_up.sql"),
 ),(
-    "0001_create_distributed_table_dialog_messages_up",
-    include_str!("../migrations/0001_create_distributed_table_dialog_messages_up.sql"),
-),(
+//     "0001_create_distributed_table_dialog_messages_up",
+//     include_str!("../migrations/0001_create_distributed_table_dialog_messages_up.sql"),
+// ),(
     "0001_create_dialogs_up",
     include_str!("../migrations/0001_create_dialogs_up.sql"),
 ),];

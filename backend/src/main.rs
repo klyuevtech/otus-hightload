@@ -732,13 +732,20 @@ async fn dialog_send(
         .post(dialog_service_url + "/send")
         .header("x-request-id", request_id_str)
         .json(&dialogs_body)
-        .send().await.unwrap()
-        .text().await.unwrap();
+        .send().await.unwrap();
 
+    let header_value_unknown = reqwest::header::HeaderValue::from_str("unknown").unwrap();
+    
+    let headers = res.headers().clone();
+    let x_request_id = headers.get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+    let x_server_instance = headers.get("x-server-instance").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+
+    let res_text = res.text().await.unwrap();
     HttpResponse::Ok()
         .content_type(ContentType::json())
-        .insert_header(("x-request-id", request_id_str))
-        .body(res)
+        .insert_header(("x-request-id", x_request_id))
+        .insert_header(("x-server-instance", x_server_instance))
+        .body(res_text)
 }
 
 #[derive(Deserialize)]
@@ -775,21 +782,29 @@ async fn dialog_list(
         "limit": search.limit.unwrap_or(50),
     });
     let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
-    let request_id_str = req.headers().get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+    let x_request_id = req.headers().get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
 
     let res = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build().unwrap()
         .post(dialog_service_url + "/list")
-        .header("x-request-id", request_id_str)
+        .header("x-request-id", x_request_id)
         .json(&dialogs_body)
-        .send().await.unwrap()
-        .text().await.unwrap();
+        .send().await.unwrap();
+
+    let header_value_unknown = reqwest::header::HeaderValue::from_str("unknown").unwrap();
+    
+    let headers = res.headers().clone();
+    let x_request_id = headers.get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+    let x_server_instance = headers.get("x-server-instance").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+
+    let res_text = res.text().await.unwrap();
 
     HttpResponse::Ok()
         .content_type(ContentType::json())
-        .insert_header(("x-request-id", request_id_str))
-        .body(res)
+        .insert_header(("x-request-id", x_request_id))
+        .insert_header(("x-server-instance", x_server_instance))
+        .body(res_text.clone())
 }
 
 

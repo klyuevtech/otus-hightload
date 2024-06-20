@@ -6,6 +6,15 @@ networks:
 services:
   dialogs:
     build:
+      context: ./proxy
+    depends_on:
+      - dialogs01
+      - dialogs02
+    networks:
+      - server-side
+
+  dialogs01:
+    build:
       context: .
       target: development
     environment:
@@ -18,6 +27,33 @@ services:
       - PG_PASSWORD=postgres
       - PG_MASTER_POOL_MAX_SIZE=100
       - PG_REPLICA_POOL_MAX_SIZE=300
+      - SELF_HOST_NAME=dialogs01
+    networks: [ backend, server-side ]
+
+    # ports:
+      # - 8001:8000
+      # - 9000:9000
+    volumes:
+      - ./src:/code/src
+      - backend-cache:/code/target
+    depends_on:
+      - master
+
+  dialogs02:
+    build:
+      context: .
+      target: development
+    environment:
+      - HTTP_SERVER_ADDRESS=0.0.0.0:8000
+      - RUST_LOG=debug
+      - PG_DBNAME=postgres
+      - PG_AUTHORITY_MASTER=master:5432
+      - PG_AUTHORITY_REPLICA=master:5432
+      - PG_USER=postgres
+      - PG_PASSWORD=postgres
+      - PG_MASTER_POOL_MAX_SIZE=100
+      - PG_REPLICA_POOL_MAX_SIZE=300
+      - SELF_HOST_NAME=dialogs02
     networks: [ backend, server-side ]
 
     # ports:

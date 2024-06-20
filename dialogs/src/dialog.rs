@@ -63,31 +63,29 @@ impl Dialog {
         let stmt = pg_client.prepare(
             "SELECT id FROM dialogs WHERE (user_id1 = $1 AND user_id2 = $2) OR (user_id1 = $2 AND user_id2 = $1)"
         ).await?;
-
-        let row = pg_client.query_one(&stmt, &[&user_id1, &user_id2]).await?;
-        if row.is_empty() {
+        let rows = pg_client.query(&stmt, &[&user_id1, &user_id2]).await?;
+        if rows.is_empty() {
             return Ok(Vec::new());
         }
 
-        let dialog_id: uuid::Uuid = row.get(0);
+        let dialog_id: uuid::Uuid = rows.get(0).unwrap().get(0);
 
         let stmt = pg_client.prepare(
             "SELECT id, dialog_id, user_id, content FROM dialog_messages WHERE dialog_id = $1 ORDER BY id OFFSET $2 LIMIT $3"
         ).await?;
-
         let rows = pg_client.query(&stmt, &[&dialog_id, &(offset as i64), &(limit as i64)]).await?;
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let mut messages = Vec::new();
-        for row in rows {
-            messages.push(Message {
+        Ok(rows.into_iter().map(|row|
+            Message {
                 id: row.get(0),
                 dialog_id: row.get(1),
                 user_id: row.get(2),
                 content: row.get(3),
-            });
-        }
-
-        Ok(messages)
+            }
+        ).collect::<Vec<Message>>())
     }
 }
 
