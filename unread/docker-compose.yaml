@@ -1,0 +1,99 @@
+networks:
+    backend:
+    server-side:
+        name: server-side
+
+services:
+    unread:
+        build:
+            context: ./proxy
+        depends_on:
+            - unread01
+            - unread02
+        networks:
+            - server-side
+
+    unread01:
+        build:
+            context: .
+            target: development
+        environment:
+            - HTTP_SERVER_ADDRESS=0.0.0.0:8000
+            - RUST_LOG=debug
+            - PG_DBNAME=postgres
+            - PG_AUTHORITY_MASTER=master:5432
+            - PG_AUTHORITY_REPLICA=master:5432
+            - PG_USER=postgres
+            - PG_PASSWORD=postgres
+            - PG_MASTER_POOL_MAX_SIZE=100
+            - PG_REPLICA_POOL_MAX_SIZE=300
+            - SELF_HOST_NAME=unread01
+        networks: [backend, server-side]
+
+        # ports:
+        # - 8001:8000
+        # - 9000:9000
+        volumes:
+            - ./src:/code/src
+            - backend-cache:/code/target
+        depends_on:
+            - master
+
+    unread02:
+        build:
+            context: .
+            target: development
+        environment:
+            - HTTP_SERVER_ADDRESS=0.0.0.0:8000
+            - RUST_LOG=debug
+            - PG_DBNAME=postgres
+            - PG_AUTHORITY_MASTER=master:5432
+            - PG_AUTHORITY_REPLICA=master:5432
+            - PG_USER=postgres
+            - PG_PASSWORD=postgres
+            - PG_MASTER_POOL_MAX_SIZE=100
+            - PG_REPLICA_POOL_MAX_SIZE=300
+            - SELF_HOST_NAME=unread02
+        networks: [backend, server-side]
+
+        # ports:
+        # - 8001:8000
+        # - 9000:9000
+        volumes:
+            - ./src:/code/src
+            - backend-cache:/code/target
+        depends_on:
+            - master
+    master:
+        container_name: "${COMPOSE_PROJECT_NAME:-citus}_master"
+        image: "citusdata/citus"
+        # ports: ["${COORDINATOR_EXTERNAL_PORT:-5432}:5432"]
+        labels: ["com.citusdata.role=Master"]
+        networks: [backend]
+        environment: &AUTH
+            POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+            POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+            PGUSER: "${POSTGRES_USER:-postgres}"
+            PGPASSWORD: "${POSTGRES_PASSWORD}"
+            POSTGRES_HOST_AUTH_METHOD: "${POSTGRES_HOST_AUTH_METHOD:-trust}"
+    worker:
+        image: "citusdata/citus"
+        labels: ["com.citusdata.role=Worker"]
+        depends_on: [manager]
+        environment: *AUTH
+        command: "/wait-for-manager.sh"
+        networks: [backend]
+        volumes:
+            - healthcheck-volume:/healthcheck
+    manager:
+        container_name: "${COMPOSE_PROJECT_NAME:-citus}_manager"
+        image: "citusdata/membership-manager:0.3.0"
+        networks: [backend]
+        volumes:
+            - "${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock"
+            - healthcheck-volume:/healthcheck
+        depends_on: [master]
+        environment: *AUTH
+volumes:
+    backend-cache: {}
+    healthcheck-volume:

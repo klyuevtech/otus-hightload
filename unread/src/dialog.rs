@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio_postgres::GenericClient;
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct Message {
     id: Uuid,
     sender_user_id: Uuid,
@@ -11,17 +11,16 @@ pub struct Message {
 }
 
 impl Message {
-    // pub fn get_id(&self) -> Uuid {
-    //     self.id
-    // }
+    pub fn get_id(&self) -> Uuid {
+        self.id
+    }
     pub async fn save<C: GenericClient>(
         pg_client: &C,
-        message_id: Uuid,
         sender_user_id: Uuid,
         receiver_user_id: Uuid,
         content: String,
     ) -> Result<(), tokio_postgres::Error> {
-        let message = Message::new(message_id, sender_user_id, receiver_user_id, content).await;
+        let message = Message::new(sender_user_id, receiver_user_id, content).await;
         Message::create(pg_client, &message).await?;
         Ok(())
     }
@@ -57,14 +56,21 @@ impl Message {
             .collect::<Vec<Message>>())
     }
 
-    pub async fn new(
-        id: Uuid,
-        sender_user_id: Uuid,
-        receiver_user_id: Uuid,
-        content: String,
-    ) -> Message {
+    pub async fn count<C: GenericClient>(
+        pg_client: &C,
+        user_id1: Uuid,
+        user_id2: Uuid,
+    ) -> Result<i64, tokio_postgres::Error> {
+        let stmt = pg_client.prepare(
+            "SELECT COUNT(*) FROM dialog_messages WHERE (sender_user_id = $1 AND receiver_user_id = $2) OR (sender_user_id = $2 AND receiver_user_id = $1)"
+        ).await?;
+        let row = pg_client.query_one(&stmt, &[&user_id1, &user_id2]).await?;
+        Ok(row.get(0))
+    }
+
+    pub async fn new(sender_user_id: Uuid, receiver_user_id: Uuid, content: String) -> Message {
         Self {
-            id,
+            id: Uuid::new_v4(),
             sender_user_id,
             receiver_user_id,
             content,
@@ -92,6 +98,42 @@ impl Message {
             .await?;
 
         Ok(())
+    }
+
+    pub async fn get_by_ids<C: GenericClient>(
+        pg_client: &C,
+        ids: Vec<Uuid>,
+    ) -> Result<Vec<Message>, tokio_postgres::Error> {
+        let stmt = pg_client
+            .prepare(
+                "SELECT id, sender_user_id, receiver_user_id, content FROM dialog_messages WHERE id = ANY($1)"
+            )
+            .await
+            .unwrap();
+
+        let rows = pg_client.query(&stmt, &[&ids]).await.unwrap();
+
+        Ok(rows
+            .into_iter()
+            .map(|row| Message {
+                id: row.get(0),
+                sender_user_id: row.get(1),
+                receiver_user_id: row.get(2),
+                content: row.get(3),
+            })
+            .collect::<Vec<Message>>())
+    }
+
+    pub async fn remove_by_ids<C: GenericClient>(
+        pg_client: &C,
+        ids: Vec<Uuid>,
+    ) -> Result<u64, tokio_postgres::Error> {
+        let stmt = pg_client
+            .prepare("DELETE FROM dialog_messages WHERE id = ANY($1)")
+            .await
+            .unwrap();
+
+        pg_client.execute(&stmt, &[&ids]).await
     }
     // async fn read<C: GenericClient>(pg_client: &C, message_id: Uuid) -> Result<Message, tokio_postgres::Error> {
     //     let stmt = pg_client.prepare(

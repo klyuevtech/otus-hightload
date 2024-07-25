@@ -1,15 +1,23 @@
 use std::str::FromStr;
 
 use actix_web::http::header::ContentType;
-use actix_web::{error,
+use actix_web::{
+    error,
     // http,
-    middleware, web, App, Error, HttpResponse, HttpRequest, HttpServer
+    middleware,
+    web,
+    App,
+    Error,
+    HttpRequest,
+    HttpResponse,
+    HttpServer,
 };
 use deadpool_postgres::Pool as PostgresPool;
 use deadpool_redis::Pool as RedisPool;
-use futures::{future, StreamExt};
+use futures::{future, stream, StreamExt};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use postgres_friend_storage::PostgresFriendStorage;
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tarantool::{TarantoolClientConfig, TarantoolClientManager};
@@ -20,28 +28,29 @@ use user_search::user_search_server::{
     UserSearch,
     // UserSearchServer
 };
-use user_search::{UserSearchResponse, UserSearchRequest};
+use user_search::{UserSearchRequest, UserSearchResponse};
 // use tonic::codec::CompressionEncoding;
 use actix_web_httpauth::extractors::bearer::{self, BearerAuth};
 // use amqprs::channel::Channel;
 use reqwest;
+use uuid::Uuid;
 
-mod user_search;
-mod postgres;
-mod tarantool;
-mod user;
-mod session;
 mod friend;
-mod post;
-mod redis;
-mod rabbitmq;
-mod websocket;
-mod session_storage;
-mod postgres_session_storage;
-mod tarantool_session_storage;
 mod friend_storage;
+mod post;
+mod postgres;
 mod postgres_friend_storage;
+mod postgres_session_storage;
+mod rabbitmq;
+mod redis;
+mod session;
+mod session_storage;
+mod tarantool;
 mod tarantool_friend_storage;
+mod tarantool_session_storage;
+mod user;
+mod user_search;
+mod websocket;
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
 
@@ -86,7 +95,10 @@ struct UserSearchRequestQuery {
     last_name: String,
 }
 
-async fn search_user(pool: web::Data<&'static PostgresPool>, search: web::Query<UserSearchRequestQuery>) -> HttpResponse {
+async fn search_user(
+    pool: web::Data<&'static PostgresPool>,
+    search: web::Query<UserSearchRequestQuery>,
+) -> HttpResponse {
     let client = match pool.get().await {
         Ok(client) => client,
         Err(err) => {
@@ -95,7 +107,14 @@ async fn search_user(pool: web::Data<&'static PostgresPool>, search: web::Query<
         }
     };
     let use_fast_search = pool.status().available < 0;
-    match user::User::search_by_first_name_and_last_name(&**client, &search.first_name, &search.last_name, use_fast_search).await {
+    match user::User::search_by_first_name_and_last_name(
+        &**client,
+        &search.first_name,
+        &search.last_name,
+        use_fast_search,
+    )
+    .await
+    {
         Ok(users) => HttpResponse::Ok().json(users),
         Err(err) => {
             log::debug!("unable to find users: {:?}", err);
@@ -104,7 +123,10 @@ async fn search_user(pool: web::Data<&'static PostgresPool>, search: web::Query<
     }
 }
 
-async fn register_user(pool: web::Data<&'static PostgresPool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
+async fn register_user(
+    pool: web::Data<&'static PostgresPool>,
+    mut payload: web::Payload,
+) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -136,7 +158,8 @@ async fn register_user(pool: web::Data<&'static PostgresPool>, mut payload: web:
         Ok(result) => result,
         Err(err) => {
             log::debug!("unable to register user: {:?}", err);
-            return Ok(HttpResponse::BadRequest().json("password format is incorrect: ".to_owned() + &err.to_string()));
+            return Ok(HttpResponse::BadRequest()
+                .json("password format is incorrect: ".to_owned() + &err.to_string()));
         }
     };
 
@@ -153,27 +176,26 @@ async fn register_user(pool: web::Data<&'static PostgresPool>, mut payload: web:
         &user_data.second_name,
         &user_data.birthdate,
         &user_data.biography,
-        &user_data.city
+        &user_data.city,
     ) {
         Ok(user) => user,
         Err(e) => {
             log::debug!("user data is incorrect: {:?}", e);
-            return Ok(HttpResponse::InternalServerError().json("user data is incorrect: ".to_owned() + &e.to_string()));
+            return Ok(HttpResponse::InternalServerError()
+                .json("user data is incorrect: ".to_owned() + &e.to_string()));
         }
     };
 
-    match user::User::create(
-        &**client,
-        &user,
-        &user_data.password
-    ).await {
+    match user::User::create(&**client, &user, &user_data.password).await {
         Ok(token) => {
             #[derive(Debug, Serialize)]
             struct UserRegisterResponse {
                 user_id: String,
             }
-            Ok(HttpResponse::Ok().json(UserRegisterResponse{user_id: token.to_string()}))
-        },
+            Ok(HttpResponse::Ok().json(UserRegisterResponse {
+                user_id: token.to_string(),
+            }))
+        }
         Err(err) => {
             log::debug!("unable to register user: {:?}", err);
             return Ok(HttpResponse::InternalServerError().json("unable to register user"));
@@ -181,7 +203,10 @@ async fn register_user(pool: web::Data<&'static PostgresPool>, mut payload: web:
     }
 }
 
-async fn login(pool: web::Data<&'static PostgresPool>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
+async fn login(
+    pool: web::Data<&'static PostgresPool>,
+    mut payload: web::Payload,
+) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -218,20 +243,22 @@ async fn login(pool: web::Data<&'static PostgresPool>, mut payload: web::Payload
         return Ok(HttpResponse::InternalServerError().json("unable to authenticate user"));
     }
 
-    match session::Session::create(
-        &session::Session::new(
-            uuid::Uuid::new_v4().to_string(),
-            login_data.id,
-            serde_json::json!({}).to_string(),
-        )
-    ).await {
+    match session::Session::create(&session::Session::new(
+        uuid::Uuid::new_v4().to_string(),
+        login_data.id,
+        serde_json::json!({}).to_string(),
+    ))
+    .await
+    {
         Ok(session_id) => {
             #[derive(Debug, Serialize)]
             struct UserLoginResponse {
                 token: String,
             }
-            Ok(HttpResponse::Ok().json(UserLoginResponse{token: session_id.to_string()}))
-        },
+            Ok(HttpResponse::Ok().json(UserLoginResponse {
+                token: session_id.to_string(),
+            }))
+        }
         Err(err) => {
             log::debug!("unable to register user: {:?}", err);
             return Ok(HttpResponse::InternalServerError().json("unable to register user"));
@@ -248,10 +275,7 @@ impl UserSearch for UserSearchService {
     async fn search(
         &self,
         request: tonic::Request<UserSearchRequest>,
-    ) -> std::result::Result<
-        tonic::Response<UserSearchResponse>,
-        tonic::Status,
-    > {
+    ) -> std::result::Result<tonic::Response<UserSearchResponse>, tonic::Status> {
         let client = match self.pg_pool.get().await {
             Ok(client) => client,
             Err(err) => {
@@ -265,27 +289,48 @@ impl UserSearch for UserSearchService {
         let first_name = &req.first_name;
         let second_name = &req.last_name;
 
-        match user::User::search_by_first_name_and_last_name(&**client, &first_name, &second_name, true).await {
+        match user::User::search_by_first_name_and_last_name(
+            &**client,
+            &first_name,
+            &second_name,
+            true,
+        )
+        .await
+        {
             Ok(users) => {
-                let user_data = users.into_iter().map(|user: user::User| user_search::User {
-                    id: user.id().to_string(),
-                    first_name: user.first_name().to_string(),
-                    second_name: user.second_name().to_string(),
-                    birthdate: user.birthdate().to_string(),
-                    biography: user.biography().to_string(),
-                    city: user.city().to_string(),
-                }).collect();
-                Ok(tonic::Response::new(UserSearchResponse{ data: user_data, page_number: 1, results_per_page: 50, }))
-            },
+                let user_data = users
+                    .into_iter()
+                    .map(|user: user::User| user_search::User {
+                        id: user.id().to_string(),
+                        first_name: user.first_name().to_string(),
+                        second_name: user.second_name().to_string(),
+                        birthdate: user.birthdate().to_string(),
+                        biography: user.biography().to_string(),
+                        city: user.city().to_string(),
+                    })
+                    .collect();
+                Ok(tonic::Response::new(UserSearchResponse {
+                    data: user_data,
+                    page_number: 1,
+                    results_per_page: 50,
+                }))
+            }
             Err(err) => {
                 log::debug!("unable to find users: {:?}", err);
-                return Err(tonic::Status::not_found(format!("Couldn't find users by query: {}, {}", &first_name, &second_name)));
+                return Err(tonic::Status::not_found(format!(
+                    "Couldn't find users by query: {}, {}",
+                    &first_name, &second_name
+                )));
             }
         }
     }
 }
 
-async fn friend_set(path: web::Path<String>, auth: BearerAuth, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
+async fn friend_set(
+    path: web::Path<String>,
+    auth: BearerAuth,
+    redis_pool: web::Data<&'static RedisPool>,
+) -> Result<HttpResponse, Error> {
     let friend_user_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
         Ok(val) => val,
         Err(_err) => return Ok(HttpResponse::InternalServerError().json("internal error")),
@@ -310,12 +355,12 @@ async fn friend_set(path: web::Path<String>, auth: BearerAuth, redis_pool: web::
                 return Ok(HttpResponse::InternalServerError().json("unable to add friend"));
             }
         };
-    
+
         if is_persistant {
             log::debug!("unable to add friend: record already exists");
-            return Ok(HttpResponse::InternalServerError().json("unable to add friend"));   
+            return Ok(HttpResponse::InternalServerError().json("unable to add friend"));
         }
-        
+
         match friend::Friend::create(&friend, &mut redis_connection).await {
             Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
             Err(err) => {
@@ -329,7 +374,10 @@ async fn friend_set(path: web::Path<String>, auth: BearerAuth, redis_pool: web::
     }
 }
 
-async fn friend_search(pg_pool: web::Data<&'static PostgresPool>, auth: BearerAuth) -> Result<HttpResponse, Error> {
+async fn friend_search(
+    pg_pool: web::Data<&'static PostgresPool>,
+    auth: BearerAuth,
+) -> Result<HttpResponse, Error> {
     if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
         let user_id = session.get_user_id();
         let friends = match friend::Friend::get_by_user_id(&user_id).await {
@@ -349,7 +397,7 @@ async fn friend_search(pg_pool: web::Data<&'static PostgresPool>, auth: BearerAu
         //         return Ok(HttpResponse::InternalServerError().json("unable to get postgres client"));
         //     }
         // };
-    
+
         // let users = user::User::search_by_ids(
         //     &**pg_client,
         //     &friends.into_iter().map(|friend| friend.get_friend_id().to_string()).collect(),
@@ -362,7 +410,11 @@ async fn friend_search(pg_pool: web::Data<&'static PostgresPool>, auth: BearerAu
     }
 }
 
-async fn friend_delete(path: web::Path<String>, mut payload: web::Payload, redis_pool: web::Data<&'static RedisPool>) -> Result<HttpResponse, Error> {
+async fn friend_delete(
+    path: web::Path<String>,
+    mut payload: web::Payload,
+    redis_pool: web::Data<&'static RedisPool>,
+) -> Result<HttpResponse, Error> {
     let user_id = match uuid::Uuid::from_str(&path.parse::<String>().unwrap()) {
         Ok(val) => val,
         Err(_err) => return Ok(HttpResponse::InternalServerError().json("internal error")),
@@ -382,10 +434,13 @@ async fn friend_delete(path: web::Path<String>, mut payload: web::Payload, redis
     }
 
     let friend_user_id = match serde_json::from_slice::<FriendDeletePayload>(&body) {
-        Ok(friend_data) => match uuid::Uuid::from_str(&friend_data.user_id) { Ok(user_id) => user_id, Err(err) => {
-            log::debug!("unable to parse json data: {:?}", err);
-            return Ok(HttpResponse::BadRequest().json("unable to parse json data"));
-        }},
+        Ok(friend_data) => match uuid::Uuid::from_str(&friend_data.user_id) {
+            Ok(user_id) => user_id,
+            Err(err) => {
+                log::debug!("unable to parse json data: {:?}", err);
+                return Ok(HttpResponse::BadRequest().json("unable to parse json data"));
+            }
+        },
         Err(err) => {
             log::debug!("unable to parse json data: {:?}", err);
             return Ok(HttpResponse::BadRequest().json("unable to parse json data"));
@@ -400,26 +455,27 @@ async fn friend_delete(path: web::Path<String>, mut payload: web::Payload, redis
         }
     };
 
-    let friend_option = match friend::Friend::get_by_user_id_and_friend_id(&user_id, &friend_user_id).await {
-        Ok(friend_option) => friend_option,
-        Err(err) => {
-            log::debug!("unable to delete friend: {:?}", err);
-            return Ok(HttpResponse::InternalServerError().json("unable to delete friend"));
-        }
-    };
+    let friend_option =
+        match friend::Friend::get_by_user_id_and_friend_id(&user_id, &friend_user_id).await {
+            Ok(friend_option) => friend_option,
+            Err(err) => {
+                log::debug!("unable to delete friend: {:?}", err);
+                return Ok(HttpResponse::InternalServerError().json("unable to delete friend"));
+            }
+        };
 
     match friend_option {
-        Some(friend) => 
-            match friend::Friend::delete(&friend, &mut redis_connection).await {
-                Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
-                Err(err) => {
-                    log::debug!("unable to add friend: {:?}", err);
-                    Ok(HttpResponse::InternalServerError().json("unable to delete friend"))
-                }
-            },
+        Some(friend) => match friend::Friend::delete(&friend, &mut redis_connection).await {
+            Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
+            Err(err) => {
+                log::debug!("unable to add friend: {:?}", err);
+                Ok(HttpResponse::InternalServerError().json("unable to delete friend"))
+            }
+        },
         None => {
             log::debug!("unable to delete friend: record not found");
-            return Ok(HttpResponse::InternalServerError().json("unable to delete friend: record not found"));
+            return Ok(HttpResponse::InternalServerError()
+                .json("unable to delete friend: record not found"));
         }
     }
 }
@@ -454,14 +510,22 @@ async fn post_feed(
 
     if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
         let user_id = session.get_user_id();
-        let feed = match post::Post::get_feed(&**pg_client, &mut redis_connection, &user_id, &search.offset, &search.limit).await {
+        let feed = match post::Post::get_feed(
+            &**pg_client,
+            &mut redis_connection,
+            &user_id,
+            &search.offset,
+            &search.limit,
+        )
+        .await
+        {
             Ok(feed) => feed,
             Err(err) => {
                 log::debug!("unable to get feed: {:?}", err);
                 return Ok(HttpResponse::InternalServerError().json("unable to get feed"));
             }
         };
-    
+
         Ok(HttpResponse::Ok().json(feed))
     } else {
         log::debug!("unable to get user id: unauthorized");
@@ -513,7 +577,7 @@ async fn post_create(
                 return Ok(HttpResponse::InternalServerError().json("unable to create post"));
             }
         };
-    
+
         match post::Post::create(&**pg_client, &post).await {
             Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
             Err(err) => {
@@ -527,7 +591,10 @@ async fn post_create(
     }
 }
 
-async fn post_get(pg_pool: web::Data<&'static PostgresPool>, path: web::Path<String>) -> Result<HttpResponse, Error> {
+async fn post_get(
+    pg_pool: web::Data<&'static PostgresPool>,
+    path: web::Path<String>,
+) -> Result<HttpResponse, Error> {
     let post_id = match uuid::Uuid::parse_str(&path) {
         Ok(val) => val,
         Err(_err) => return Ok(HttpResponse::InternalServerError().json("internal error")),
@@ -602,14 +669,15 @@ async fn post_update(
                 return Ok(HttpResponse::InternalServerError().json("unable to update post"));
             }
         };
-    
+
         if user_id != post.get_user_id() {
             log::debug!("unable to update post: user is not owner");
-            return Ok(HttpResponse::InternalServerError().json("unable to update post: user is not owner"));
+            return Ok(HttpResponse::InternalServerError()
+                .json("unable to update post: user is not owner"));
         }
-    
+
         post.set_content(&post_data.text);
-    
+
         match post::Post::update(&**pg_client, &post).await {
             Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
             Err(err) => {
@@ -650,12 +718,13 @@ async fn post_delete(
                 return Ok(HttpResponse::InternalServerError().json("unable to get post"));
             }
         };
-    
+
         if user_id != post.get_user_id() {
             log::debug!("unable to delete post: user is not owner");
-            return Ok(HttpResponse::InternalServerError().json("unable to delete post: user is not owner"));
+            return Ok(HttpResponse::InternalServerError()
+                .json("unable to delete post: user is not owner"));
         }
-    
+
         match post::Post::delete(&**pg_client, &post).await {
             Ok(_res) => Ok(HttpResponse::Ok().json("ok")),
             Err(err) => {
@@ -671,7 +740,10 @@ async fn post_delete(
 
 fn log_request(req: &HttpRequest) {
     let unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
-    let request_id = req.headers().get("x-request-id").unwrap_or_else(|| &unknown);
+    let request_id = req
+        .headers()
+        .get("x-request-id")
+        .unwrap_or_else(|| &unknown);
     log::debug!("[Request ID {:?}] {:?}", request_id, req);
 }
 
@@ -688,7 +760,8 @@ async fn dialog_send(
         message_sender_user_id = session.get_user_id();
     } else {
         log::debug!("Unable to send dialog message: unauthorized");
-        return HttpResponse::InternalServerError().json("Unable to send dialog message: unauthorized");
+        return HttpResponse::InternalServerError()
+            .json("Unable to send dialog message: unauthorized");
     }
 
     let message_receiver_user_id = match uuid::Uuid::parse_str(&path) {
@@ -718,27 +791,48 @@ async fn dialog_send(
         }
     };
 
-    let dialog_service_url = std::env::var("DIALOGS_SERVICE_URL").unwrap_or_else(|_| String::from("localhost:8001"));
+    let dialog_service_url = std::env::var("UNREAD_SERVICE_URL")
+        .unwrap_or_else(|_| String::from("unread:8001"))
+        + "/send";
+
     let dialogs_body = serde_json::json!({
         "message_sender_user_id": message_sender_user_id,
         "message_receiver_user_id": message_receiver_user_id,
         "text": payload_data.text
     });
+
     let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
-    let request_id_str = req.headers().get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+    let request_id_str = req
+        .headers()
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+
     let res = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
-        .build().unwrap()
+        .build()
+        .unwrap()
         .post(dialog_service_url + "/send")
         .header("x-request-id", request_id_str)
         .json(&dialogs_body)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     let header_value_unknown = reqwest::header::HeaderValue::from_str("unknown").unwrap();
-    
+
     let headers = res.headers().clone();
-    let x_request_id = headers.get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
-    let x_server_instance = headers.get("x-server-instance").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+    let x_request_id = headers
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+    let x_server_instance = headers
+        .get("x-server-instance")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
 
     let res_text = res.text().await.unwrap();
     HttpResponse::Ok()
@@ -746,6 +840,68 @@ async fn dialog_send(
         .insert_header(("x-request-id", x_request_id))
         .insert_header(("x-server-instance", x_server_instance))
         .body(res_text)
+}
+
+async fn dialog_count(req: HttpRequest, auth: BearerAuth) -> HttpResponse {
+    log_request(&req);
+
+    let dialog_id: uuid::Uuid =
+        if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+            session.get_user_id()
+        } else {
+            log::debug!("Unable to send dialog message: unauthorized");
+            return HttpResponse::InternalServerError()
+                .json("Unable to send dialog message: unauthorized");
+        };
+
+    let dialog_service_url = std::env::var("UNREAD_SERVICE_URL")
+        .unwrap_or_else(|_| String::from("unread:8001"))
+        + "/count";
+
+    let dialogs_body = serde_json::json!({
+        "dialog_id": dialog_id,
+    });
+
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let x_request_id = req
+        .headers()
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+
+    let res = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap()
+        .post(dialog_service_url + "/count")
+        .header("x-request-id", x_request_id)
+        .json(&dialogs_body)
+        .send()
+        .await
+        .unwrap();
+
+    let header_value_unknown = reqwest::header::HeaderValue::from_str("unknown").unwrap();
+
+    let headers = res.headers().clone();
+    let x_request_id = headers
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+    let x_server_instance = headers
+        .get("x-server-instance")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+
+    let res_text = res.text().await.unwrap();
+
+    HttpResponse::Ok()
+        .content_type(ContentType::json())
+        .insert_header(("x-request-id", x_request_id))
+        .insert_header(("x-server-instance", x_server_instance))
+        .body(res_text.clone())
 }
 
 #[derive(Deserialize)]
@@ -762,19 +918,20 @@ async fn dialog_list(
 ) -> HttpResponse {
     log_request(&req);
 
-    let user_id1: uuid::Uuid = if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
-        session.get_user_id()
-    } else {
-        log::debug!("Unable to send dialog message: unauthorized");
-        return HttpResponse::InternalServerError().json("Unable to send dialog message: unauthorized");
-    };
+    let user_id1: uuid::Uuid =
+        if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+            session.get_user_id()
+        } else {
+            log::debug!("Unable to send dialog message: unauthorized");
+            return HttpResponse::InternalServerError()
+                .json("Unable to send dialog message: unauthorized");
+        };
 
     let user_id2 = match uuid::Uuid::parse_str(&path) {
-        Ok(user_id2) => user_id2,
+        Ok(uid) => uid,
         Err(_err) => return HttpResponse::InternalServerError().json("User id is not specified"),
     };
 
-    let dialog_service_url = std::env::var("DIALOGS_SERVICE_URL").unwrap_or_else(|_| String::from("localhost:8001"));
     let dialogs_body = serde_json::json!({
         "user_id1": user_id1,
         "user_id2": user_id2,
@@ -782,21 +939,125 @@ async fn dialog_list(
         "limit": search.limit.unwrap_or(50),
     });
     let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
-    let x_request_id = req.headers().get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+    let x_request_id = req
+        .headers()
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+
+    let client = reqwest::Client::new();
+    const CONCURRENT_REQUESTS: usize = 2;
+    let urls: [String; CONCURRENT_REQUESTS] = [
+        std::env::var("DIALOGS_SERVICE_URL").unwrap_or_else(|_| String::from("dialogs:8001"))
+            + "/list",
+        std::env::var("UNREAD_SERVICE_URL").unwrap_or_else(|_| String::from("unread:8001"))
+            + "/list",
+    ];
+
+    let bodies = stream::iter(urls)
+        .map(|url| {
+            let client = &client;
+            let dialogs_body = dialogs_body.clone();
+            async move {
+                let res = client
+                    .post(url + "/list")
+                    .header("x-request-id", x_request_id)
+                    .json(&dialogs_body)
+                    .send()
+                    .await
+                    .unwrap();
+
+                res.text().await.unwrap()
+            }
+        })
+        .buffered(CONCURRENT_REQUESTS);
+
+    let responses: Vec<String> = bodies
+        .fold(Vec::new(), |mut acc, body| async {
+            acc.push(body);
+            acc
+        })
+        .await;
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct Message {
+        id: Uuid,
+        sender_user_id: Uuid,
+        receiver_user_id: Uuid,
+        content: String,
+    }
+
+    let read_messages = serde_json::from_str::<Vec<Message>>(&responses[0]).unwrap();
+    let unread_messages = serde_json::from_str::<Vec<Message>>(&responses[1]).unwrap();
+
+    let mut messages = Vec::new();
+    messages.extend(unread_messages);
+
+    if messages.len() < search.limit.unwrap_or(50) {
+        let read_slice: Vec<Message> =
+            read_messages[1..search.limit.unwrap_or(50) - messages.len()].to_vec();
+        messages.extend(read_slice);
+    }
+
+    HttpResponse::Ok()
+        .content_type(ContentType::json())
+        .insert_header(("x-request-id", x_request_id))
+        // .insert_header(("x-server-instance", x_server_instance))
+        .json(messages)
+}
+
+async fn dialog_get_unread(req: HttpRequest, auth: BearerAuth) -> HttpResponse {
+    log_request(&req);
+
+    let user_id1: uuid::Uuid =
+        if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+            session.get_user_id()
+        } else {
+            log::debug!("Unable to send dialog message: unauthorized");
+            return HttpResponse::InternalServerError()
+                .json("Unable to send dialog message: unauthorized");
+        };
+
+    let dialog_service_url =
+        std::env::var("UNREAD_SERVICE_URL").unwrap_or_else(|_| String::from("unread:8001"));
+
+    let dialogs_body = serde_json::json!({
+        "user_id1": user_id1,
+    });
+
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let x_request_id = req
+        .headers()
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
 
     let res = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
-        .build().unwrap()
-        .post(dialog_service_url + "/list")
+        .build()
+        .unwrap()
+        .post(dialog_service_url + "/get_unread")
         .header("x-request-id", x_request_id)
         .json(&dialogs_body)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     let header_value_unknown = reqwest::header::HeaderValue::from_str("unknown").unwrap();
-    
+
     let headers = res.headers().clone();
-    let x_request_id = headers.get("x-request-id").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
-    let x_server_instance = headers.get("x-server-instance").unwrap_or_else(|| &header_value_unknown).to_str().unwrap();
+    let x_request_id = headers
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+    let x_server_instance = headers
+        .get("x-server-instance")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
 
     let res_text = res.text().await.unwrap();
 
@@ -804,9 +1065,148 @@ async fn dialog_list(
         .content_type(ContentType::json())
         .insert_header(("x-request-id", x_request_id))
         .insert_header(("x-server-instance", x_server_instance))
-        .body(res_text.clone())
+        .body(res_text)
 }
 
+async fn dialog_mark_as_read(
+    req: HttpRequest,
+    path: web::Path<String>,
+    mut payload: web::Payload,
+    auth: BearerAuth,
+) -> HttpResponse {
+    log_request(&req);
+
+    let user_id1: uuid::Uuid =
+        if let Ok(Some(session)) = session::Session::get_by_id(auth.token()).await {
+            session.get_user_id()
+        } else {
+            log::debug!("Unable to send dialog message: unauthorized");
+            return HttpResponse::InternalServerError()
+                .json("Unable to send dialog message: unauthorized");
+        };
+
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk.unwrap();
+        if (body.len() + chunk.len()) > MAX_SIZE {
+            return HttpResponse::BadRequest().json("Payload data overflow");
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    // Fetch messages from 'unread' service
+    #[derive(Deserialize)]
+    struct Payload {
+        ids: Vec<uuid::Uuid>,
+    }
+
+    let payload_data = match serde_json::from_slice::<Payload>(&body) {
+        Ok(payload) => payload,
+        Err(err) => {
+            log::debug!("Unable to parse json data: {:?}", err);
+            return HttpResponse::BadRequest().json("Unable to parse payload json data");
+        }
+    };
+
+    let dialog_service_url =
+        std::env::var("UNREAD_SERVICE_URL").unwrap_or_else(|_| String::from("unread:8001"));
+
+    let dialogs_body = serde_json::json!({
+        "ids": payload_data.ids,
+    });
+
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let x_request_id = req
+        .headers()
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+
+    let res = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap()
+        .post(dialog_service_url + "/messages/get")
+        .header("x-request-id", x_request_id)
+        .json(&dialogs_body)
+        .send()
+        .await
+        .unwrap();
+
+    // Post messages to 'dialogs' service
+    #[derive(Serialize, Deserialize)]
+    pub struct Message {
+        id: Uuid,
+        sender_user_id: Uuid,
+        receiver_user_id: Uuid,
+        content: String,
+    }
+    let messages = res.json::<Vec<Message>>().await.unwrap();
+
+    let dialog_service_url =
+        std::env::var("DIALOGS_SERVICE_URL").unwrap_or_else(|_| String::from("dialogs:8001"));
+
+    let dialogs_body = serde_json::json!({
+        "messages": messages,
+    });
+
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let x_request_id = req
+        .headers()
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+
+    let res = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap()
+        .post(dialog_service_url + "/send_messages_vec")
+        .header("x-request-id", x_request_id)
+        .json(&dialogs_body)
+        .send()
+        .await
+        .unwrap();
+
+    if res.status() != reqwest::StatusCode::OK {
+        ()
+    }
+
+    // Remove read messages from 'unread' service
+    let dialog_service_url =
+        std::env::var("UNREAD_SERVICE_URL").unwrap_or_else(|_| String::from("unread:8001"));
+
+    let dialogs_body = serde_json::json!({
+        "ids": payload_data.ids,
+    });
+
+    let header_value_unknown = actix_web::http::header::HeaderValue::from_str("unknown").unwrap();
+    let x_request_id = req
+        .headers()
+        .get("x-request-id")
+        .unwrap_or_else(|| &header_value_unknown)
+        .to_str()
+        .unwrap();
+
+    let res = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap()
+        .post(dialog_service_url + "/messages/remove")
+        .header("x-request-id", x_request_id)
+        .json(&dialogs_body)
+        .send()
+        .await
+        .unwrap();
+
+    if res.status() == reqwest::StatusCode::OK {
+        HttpResponse::Ok().json("ok")
+    } else {
+        HttpResponse::InternalServerError().json("Unable to mark messages as read")
+    }
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -821,16 +1221,18 @@ async fn main() -> std::io::Result<()> {
         //     postgres::get_master_pool_ref(),
         //     postgres::get_replica_pool_ref()
         // )
-        TarantoolSessionStorage::new(tarantool::TarantoolClientManager::new().await)
-    )).await;
+        TarantoolSessionStorage::new(tarantool::TarantoolClientManager::new().await),
+    ))
+    .await;
 
     friend::init_storage(Box::new(
         // PostgresFriendStorage::new(
         //     postgres::get_master_pool_ref(),
         //     postgres::get_replica_pool_ref()
         // )
-        TarantoolFriendStorage::new(tarantool::TarantoolClientManager::new().await)
-    )).await;
+        TarantoolFriendStorage::new(tarantool::TarantoolClientManager::new().await),
+    ))
+    .await;
 
     // let grpc_address = std::env::var("GRPC_SERVER_ADDRESS")
     //     .unwrap_or_else(|_| "127.0.0.1:9000".into())
@@ -854,7 +1256,8 @@ async fn main() -> std::io::Result<()> {
     postgres::migrate_up(
         postgres::get_master_pool_ref(),
         redis::get_pool_ref().get().await.unwrap(),
-    ).await;
+    )
+    .await;
 
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
@@ -863,102 +1266,162 @@ async fn main() -> std::io::Result<()> {
 
     builder.set_certificate_chain_file("cert.pem").unwrap();
 
-    let http_address = std::env::var("HTTP_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".into());
+    let http_address =
+        std::env::var("HTTP_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8000".into());
     let http_server = HttpServer::new(|| {
         App::new()
             .wrap(middleware::Compress::default())
             .service(
                 web::resource("/user")
                     .app_data(web::Data::new(postgres::get_replica_pool_ref()))
-                    .route(web::get().to(list_users))
+                    .route(web::get().to(list_users)),
             )
             .service(
                 web::resource("/user/get/{id}")
                     .app_data(web::Data::new(postgres::get_replica_pool_ref()))
-                    .route(web::get().to(get_user))
+                    .route(web::get().to(get_user)),
             )
             .service(
                 web::resource("/user/search")
                     .app_data(web::Data::new(postgres::get_replica_pool_ref()))
-                    .route(web::get().to(search_user))
+                    .route(web::get().to(search_user)),
             )
             .service(
                 web::resource("/user/register")
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
-                    .route(web::post().to(register_user))
+                    .route(web::post().to(register_user)),
             )
             .service(
                 web::resource("/login")
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
-                    .route(web::post().to(login))
+                    .route(web::post().to(login)),
             )
             .service(
                 web::resource("/friend/set/{user_id}")
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("friend"))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("friend"),
+                    )
                     .app_data(web::Data::new(redis::get_pool_ref()))
-                    .route(web::put().to(friend_set))
+                    .route(web::put().to(friend_set)),
             )
             .service(
                 web::resource("/friend/search")
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("friend"))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("friend"),
+                    )
                     .app_data(web::Data::new(postgres::get_replica_pool_ref()))
-                    .route(web::get().to(friend_search))
+                    .route(web::get().to(friend_search)),
             )
             .service(
                 web::resource("/friend/delete/{user_id}")
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("friend"))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("friend"),
+                    )
                     .app_data(web::Data::new(redis::get_pool_ref()))
-                    .route(web::put().to(friend_delete))
+                    .route(web::put().to(friend_delete)),
             )
             .service(
                 web::resource("/post/feed")
                     .app_data(web::Data::new(postgres::get_replica_pool_ref()))
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
                     .app_data(web::Data::new(redis::get_pool_ref()))
-                    .route(web::get().to(post_feed))
+                    .route(web::get().to(post_feed)),
             )
             .service(
                 web::resource("/post/create")
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
-                    .route(web::post().to(post_create))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
+                    .route(web::post().to(post_create)),
             )
             .service(
                 web::resource("/post/get/{id}")
                     .app_data(web::Data::new(postgres::get_replica_pool_ref()))
-                    .route(web::get().to(post_get))
+                    .route(web::get().to(post_get)),
             )
             .service(
                 web::resource("/post/update/{id}")
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
-                    .route(web::put().to(post_update))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
+                    .route(web::put().to(post_update)),
             )
             .service(
                 web::resource("/post/delete/{id}")
                     .app_data(web::Data::new(postgres::get_master_pool_ref()))
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
-                    .route(web::delete().to(post_delete))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
+                    .route(web::delete().to(post_delete)),
             )
             .service(
                 web::resource("/dialog/{user_id}/send")
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
-                    .route(web::post().to(dialog_send))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
+                    .route(web::post().to(dialog_send)),
             )
             .service(
                 web::resource("/dialog/{user_id}/list")
-                    .app_data(bearer::Config::default().realm("Restricted area").scope("post"))
-                    .route(web::get().to(dialog_list))
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
+                    .route(web::get().to(dialog_list)),
+            )
+            .service(
+                web::resource("/dialog/{dialog_id}/count")
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
+                    .route(web::get().to(dialog_count)),
+            )
+            .service(
+                web::resource("/dialog/{dialog_id}/unread")
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
+                    .route(web::get().to(dialog_get_unread)),
+            )
+            .service(
+                web::resource("/dialog/{dialog_id}/mark_as_read")
+                    .app_data(
+                        bearer::Config::default()
+                            .realm("Restricted area")
+                            .scope("post"),
+                    )
+                    .route(web::get().to(dialog_mark_as_read)),
             )
     })
     .bind_openssl(&http_address, builder)?
     .run();
 
-    let _ = future::try_join(
-        tokio::spawn(http_server),
-        tokio::spawn(websocket::serve()),
-    ).await?;
+    let _ = future::try_join(tokio::spawn(http_server), tokio::spawn(websocket::serve())).await?;
 
     Ok(())
-
 }
